@@ -87,6 +87,9 @@ function Start-Dashboard {
         $servicesProperty = $workspaceData.PSObject.Properties["services"]
         if ($null -ne $servicesProperty) {
             foreach ($s in @($servicesProperty.Value)) {
+                if ([string]$s -match '^t\s+(\d+)$') {
+                    continue
+                }
                 $service = Get-Service -Name $s -ErrorAction SilentlyContinue
                 $details += [pscustomobject]@{
                     Name      = [string]$s
@@ -98,6 +101,9 @@ function Start-Dashboard {
         $executablesProperty = $workspaceData.PSObject.Properties["executables"]
         if ($null -ne $executablesProperty) {
             foreach ($exeToken in @($executablesProperty.Value)) {
+                if ([string]$exeToken -match '^t\s+(\d+)$') {
+                    continue
+                }
                 $exeText = [string]$exeToken
                 $filePath = $exeText
                 if ($exeText -match "^'(.*?)'\s*(.*)$") {

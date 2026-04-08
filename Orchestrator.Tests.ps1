@@ -321,6 +321,27 @@ Describe "Phase 3 - The Start Pipeline" {
         Assert-MockCalled -CommandName gsudo -Times 0 -Exactly
     }
 
+    It "skips optional missing service on Start without prompting or throwing" {
+        @'
+{
+  "Audio_Production": {
+    "services": ["?FakeService"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName gsudo -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Read-Host -MockWith { throw "Read-Host should not be called for optional services." }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName Read-Host -Times 0 -Exactly
+        Assert-MockCalled -CommandName gsudo -Times 0 -Exactly
+    }
+
     It "parses quoted executable with arguments and calls Start-Process correctly" {
         @'
 {
@@ -359,6 +380,47 @@ Describe "Phase 3 - The Start Pipeline" {
         { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
 
         Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter { $FilePath -eq "C:/App.exe" }
+    }
+
+    It "skips optional missing executable on Start and does not call Start-Process" {
+        @'
+{
+  "Audio_Production": {
+    "executables": ["?C:/Missing/App.exe"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName gsudo -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+        Mock -CommandName Test-Path -MockWith { $false } -ParameterFilter { $Path -eq "C:/Missing/App.exe" }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
+    }
+
+    It "executes scripts_start .ps1 via pwsh.exe synchronously with -Wait -NoNewWindow" {
+        @'
+{
+  "Audio_Production": {
+    "scripts_start": ["'C:/StartScript.ps1' -Verb"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName Start-Process -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $FilePath -eq "pwsh.exe" -and
+            $ArgumentList -eq '-WindowStyle Hidden -ExecutionPolicy Bypass -File "C:/StartScript.ps1" -Verb' -and
+            $Wait -eq $true -and
+            $NoNewWindow -eq $true
+        }
     }
 
     It "calls Show-Notification at the end of a successful Start when notifications are enabled" {
@@ -512,6 +574,26 @@ Describe "Phase 4 - The Stop Pipeline" {
         $reverseCalls[2] | Should -Be "sc.exe config SvcTwo start= demand"
         $reverseCalls[3] | Should -Be "net.exe start SvcTwo"
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "executes scripts_stop .bat synchronously with -Wait -NoNewWindow" {
+        @'
+{
+  "Audio_Production": {
+    "scripts_stop": ["C:/StopScript.bat"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName Start-Process -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Stop" | Out-Null } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $FilePath -eq "C:/StopScript.bat" -and
+            $Wait -eq $true -and
+            $NoNewWindow -eq $true
+        }
     }
 
     It "calls Show-Notification at the end of a successful Stop when notifications are enabled" {

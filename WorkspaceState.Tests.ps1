@@ -70,4 +70,30 @@ Describe "Workspace State Analyzer" {
             $Name -eq "My App"
         }
     }
+
+    It "ignores timer tokens in services and executables when calculating state" {
+        $workspace = [pscustomobject]@{
+            services    = @("warp-svc", "t 2000")
+            executables = @("'C:/App.exe'", "t 3000")
+        }
+
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+        Mock -CommandName Get-Process -MockWith { [pscustomobject]@{ Name = "App" } }
+
+        $state = Get-WorkspaceState -Workspace $workspace
+        $state | Should -Be "Ready"
+    }
+
+    It "does not penalize missing optional service in state totals" {
+        $workspace = [pscustomobject]@{
+            services    = @("?MissingService")
+            executables = @("'C:/App.exe'")
+        }
+
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { [pscustomobject]@{ Name = "App" } }
+
+        $state = Get-WorkspaceState -Workspace $workspace
+        $state | Should -Be "Ready"
+    }
 }

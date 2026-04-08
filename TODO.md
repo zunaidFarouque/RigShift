@@ -1,5 +1,1 @@
-- Optional service and executable: if not found, dont bother.
-
-- change how the shortcuts will be named. the pattern, prefix etc.
-
-- a simple GUI that can grab/select running executables and services. then sort/organize them. it will make the config process easy
+- let user create sections in the GUI: for example, my "Live performance" section might have subsections e.g. steinberg licenses (just example), also the extreme device disabling thing should be customizable. my device disabling is like this: Bluetooth, wifi, 

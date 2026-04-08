@@ -17,11 +17,21 @@ function Get-WorkspaceState {
             if ([string]::IsNullOrWhiteSpace($serviceName)) {
                 continue
             }
+            if ($serviceName -match '^t\s+(\d+)$') {
+                continue
+            }
 
-            $totalServices++
+            $isOptional = $serviceName.StartsWith("?")
+            if ($isOptional) {
+                $serviceName = $serviceName.Substring(1)
+            }
+
             $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
             if ($null -ne $service -and $service.Status -eq "Running") {
+                $totalServices++
                 $runningServices++
+            } elseif (-not $isOptional) {
+                $totalServices++
             }
         }
     }
@@ -33,12 +43,18 @@ function Get-WorkspaceState {
             if ([string]::IsNullOrWhiteSpace($executionToken)) {
                 continue
             }
-
-            $totalExecutables++
+            if ($executionToken -match '^t\s+(\d+)$') {
+                continue
+            }
 
             $filePath = $executionToken
             if ($executionToken -match "^'(.*?)'\s*(.*)$") {
                 $filePath = $matches[1]
+            }
+
+            $isOptional = $filePath.StartsWith("?")
+            if ($isOptional) {
+                $filePath = $filePath.Substring(1)
             }
 
             $leafName = Split-Path -Path $filePath -Leaf
@@ -46,7 +62,10 @@ function Get-WorkspaceState {
 
             $process = Get-Process -Name $cleanName -ErrorAction SilentlyContinue
             if ($null -ne $process) {
+                $totalExecutables++
                 $runningExecutables++
+            } elseif (-not $isOptional) {
+                $totalExecutables++
             }
         }
     }

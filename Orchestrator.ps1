@@ -130,8 +130,17 @@ if ($Action -eq "Start") {
             }
 
             $serviceName = [string]$serviceItem
+            $isOptionalService = $serviceName.StartsWith("?")
+            if ($isOptionalService) {
+                $serviceName = $serviceName.Substring(1)
+            }
+
             $svcCheck = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
             if ($null -eq $svcCheck) {
+                if ($isOptionalService) {
+                    Write-Host "Skipping optional service: $serviceName" -ForegroundColor DarkYellow
+                    continue
+                }
                 Write-Host "Warning: Service '$serviceName' does not exist on this system." -ForegroundColor Yellow
                 $ans = Read-Host "Ignore missing service and continue? (Y/N)"
                 if ($ans -match "^[Nn]$") {
@@ -162,6 +171,42 @@ if ($Action -eq "Start") {
         }
     }
 
+    # scripts_start (runs synchronously, after services, before executables)
+    $scriptsStartProperty = $workspace.PSObject.Properties["scripts_start"]
+    if ($null -ne $scriptsStartProperty) {
+        foreach ($scriptItem in $scriptsStartProperty.Value) {
+            if ($scriptItem -is [string] -and $scriptItem -match "^t\s+(\d+)$") {
+                $sleepDuration = [int]$matches[1]
+                Start-Sleep -Milliseconds $sleepDuration
+                continue
+            }
+
+            $executionToken = [string]$scriptItem
+            $filePath = $executionToken
+            $argumentList = ""
+
+            if ($executionToken -match "^'(.*?)'\s*(.*)$") {
+                $filePath = $matches[1]
+                $argumentList = $matches[2]
+            }
+
+            if ($filePath -match '\.ps1$') {
+                $pwshArg = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$filePath`""
+                if (-not [string]::IsNullOrWhiteSpace($argumentList)) {
+                    $pwshArg = "$pwshArg $argumentList"
+                }
+
+                Start-Process -FilePath "pwsh.exe" -ArgumentList $pwshArg -Wait -NoNewWindow 2>&1 | Out-Null
+            } else {
+                if ([string]::IsNullOrWhiteSpace($argumentList)) {
+                    Start-Process -FilePath $filePath -Wait -NoNewWindow 2>&1 | Out-Null
+                } else {
+                    Start-Process -FilePath $filePath -ArgumentList $argumentList -Wait -NoNewWindow 2>&1 | Out-Null
+                }
+            }
+        }
+    }
+
     $executablesProperty = $workspace.PSObject.Properties["executables"]
     if ($null -ne $executablesProperty) {
         foreach ($executableItem in $executablesProperty.Value) {
@@ -180,6 +225,16 @@ if ($Action -eq "Start") {
                 $argumentList = $matches[2]
             }
 
+            $isOptionalExecutable = $filePath.StartsWith("?")
+            if ($isOptionalExecutable) {
+                $filePath = $filePath.Substring(1)
+            }
+
+            if ($isOptionalExecutable -and -not (Test-Path -Path $filePath)) {
+                Write-Host "Skipping optional executable: $filePath" -ForegroundColor DarkYellow
+                continue
+            }
+
             if ([string]::IsNullOrWhiteSpace($argumentList)) {
                 Start-Process -FilePath $filePath
             } else {
@@ -195,6 +250,40 @@ if ($Action -eq "Start") {
 
 # Phase 4: The Stop Pipeline
 if ($Action -eq "Stop") {
+    # scripts_stop (runs synchronously; scripts are executed before any teardown)
+    $scriptsStopProperty = $workspace.PSObject.Properties["scripts_stop"]
+    if ($null -ne $scriptsStopProperty) {
+        foreach ($scriptItem in $scriptsStopProperty.Value) {
+            if ($scriptItem -is [string] -and $scriptItem -match "^t\s+(\d+)$") {
+                continue
+            }
+
+            $executionToken = [string]$scriptItem
+            $filePath = $executionToken
+            $argumentList = ""
+
+            if ($executionToken -match "^'(.*?)'\s*(.*)$") {
+                $filePath = $matches[1]
+                $argumentList = $matches[2]
+            }
+
+            if ($filePath -match '\.ps1$') {
+                $pwshArg = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$filePath`""
+                if (-not [string]::IsNullOrWhiteSpace($argumentList)) {
+                    $pwshArg = "$pwshArg $argumentList"
+                }
+
+                Start-Process -FilePath "pwsh.exe" -ArgumentList $pwshArg -Wait -NoNewWindow 2>&1 | Out-Null
+            } else {
+                if ([string]::IsNullOrWhiteSpace($argumentList)) {
+                    Start-Process -FilePath $filePath -Wait -NoNewWindow 2>&1 | Out-Null
+                } else {
+                    Start-Process -FilePath $filePath -ArgumentList $argumentList -Wait -NoNewWindow 2>&1 | Out-Null
+                }
+            }
+        }
+    }
+
     $executablesProperty = $workspace.PSObject.Properties["executables"]
     if ($null -ne $executablesProperty) {
         $executables = @($executablesProperty.Value)
@@ -209,6 +298,9 @@ if ($Action -eq "Stop") {
             $filePath = $executionToken
             if ($executionToken -match "^'(.*?)'\s*(.*)$") {
                 $filePath = $matches[1]
+            }
+            if ($filePath.StartsWith("?")) {
+                $filePath = $filePath.Substring(1)
             }
 
             $exeName = Split-Path -Path $filePath -Leaf
@@ -228,6 +320,9 @@ if ($Action -eq "Stop") {
             }
 
             $serviceName = [string]$serviceItem
+            if ($serviceName.StartsWith("?")) {
+                $serviceName = $serviceName.Substring(1)
+            }
             $svcCheck = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
             if ($null -eq $svcCheck) {
                 continue

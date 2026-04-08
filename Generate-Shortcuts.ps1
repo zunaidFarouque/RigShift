@@ -14,10 +14,22 @@ if ($null -ne $configProperty) {
 }
 
 $consoleStyle = "Normal"
+$prefixStart = "!Start-"
+$prefixStop = "!Stop-"
 if ($null -ne $configObject) {
     $consoleStyleProperty = $configObject.PSObject.Properties["console_style"]
     if ($null -ne $consoleStyleProperty -and $consoleStyleProperty.Value -eq "Hidden") {
         $consoleStyle = "Hidden"
+    }
+
+    $prefixStartProperty = $configObject.PSObject.Properties["shortcut_prefix_start"]
+    if ($null -ne $prefixStartProperty -and -not [string]::IsNullOrWhiteSpace([string]$prefixStartProperty.Value)) {
+        $prefixStart = [string]$prefixStartProperty.Value
+    }
+
+    $prefixStopProperty = $configObject.PSObject.Properties["shortcut_prefix_stop"]
+    if ($null -ne $prefixStopProperty -and -not [string]::IsNullOrWhiteSpace([string]$prefixStopProperty.Value)) {
+        $prefixStop = [string]$prefixStopProperty.Value
     }
 }
 
@@ -37,13 +49,13 @@ foreach ($workspaceName in $db.PSObject.Properties.Name) {
         continue
     }
 
-    $startShortcutPath = Join-Path -Path $shortcutDir -ChildPath "!Start-$workspaceName.lnk"
+    $startShortcutPath = Join-Path -Path $shortcutDir -ChildPath "$prefixStart$workspaceName.lnk"
     $startShortcut = $wshShell.CreateShortcut($startShortcutPath)
     $startShortcut.TargetPath = "pwsh.exe"
     $startShortcut.Arguments = "-WindowStyle $consoleStyle -ExecutionPolicy Bypass -File `"$orchestratorPath`" -WorkspaceName `"$workspaceName`" -Action `"Start`""
     $startShortcut.Save()
 
-    $stopShortcutPath = Join-Path -Path $shortcutDir -ChildPath "!Stop-$workspaceName.lnk"
+    $stopShortcutPath = Join-Path -Path $shortcutDir -ChildPath "$prefixStop$workspaceName.lnk"
     $stopShortcut = $wshShell.CreateShortcut($stopShortcutPath)
     $stopShortcut.TargetPath = "pwsh.exe"
     $stopShortcut.Arguments = "-WindowStyle $consoleStyle -ExecutionPolicy Bypass -File `"$orchestratorPath`" -WorkspaceName `"$workspaceName`" -Action `"Stop`""

@@ -8,6 +8,10 @@ To ensure the orchestration engine parses your environment flawlessly and safely
 
 ```json
 {
+  "_config": {
+    "shortcut_prefix_start": "!Start-",
+    "shortcut_prefix_stop": "!Stop-"
+  },
   "Audio_Production": {
     "services": [
       "eLicenserSvc",
@@ -17,6 +21,12 @@ To ensure the orchestration engine parses your environment flawlessly and safely
     "executables": [
       "'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe' --profile Live",
       "C:\\Tools\\AudioMixer.exe"
+    ],
+    "scripts_start": [
+      "'C:/Program Files/My Scripts/start.ps1' -Verb"
+    ],
+    "scripts_stop": [
+      "C:/Program Files/My Scripts/stop.bat"
     ],
     "protected_processes": [
       "Cubase12",
@@ -52,21 +62,54 @@ To prevent race conditions (e.g., an application crashing because its required b
 * The syntax is strictly the lowercase letter `t`, a single space, and the duration in milliseconds.
 * *Example:* `"t 5000"` will halt the pipeline execution for exactly 5 seconds before proceeding to the next item in the array.
 
-### 4. Protected Processes (No Extensions)
+### 4. Custom Synchronous Scripts (`scripts_start` / `scripts_stop`)
+Use these arrays to run custom synchronous scripts during orchestration.
+
+* **Syntax:** `scripts_start` and `scripts_stop` use the exact same *Execution String* rules as `executables`.
+  * No arguments and no spaces: just provide the path. `"C:/Tools/MyScript.bat"`
+  * Spaces in the path and/or arguments: wrap the script path in single quotes (`'`), then add a space and the arguments.
+    * Correct example: `"'C:/My Script.ps1' -arg1 -v"`
+* **Synchronous execution:** the engine pauses (`-Wait`) and waits for each script to finish before moving to the next item.
+* **Timers:** you may include timer tokens like `t 3000` in `scripts_start` (it delays like `executables`). If included in `scripts_stop`, timer tokens are ignored/skipped.
+
+### 5. Protected Processes (No Extensions)
 The `protected_processes` array acts as a safety net to prevent data loss. If the engine attempts to stop a Workspace and detects one of these processes in RAM, it will halt and ask for user confirmation.
 * Enter the raw process name exactly as it appears in Task Manager's "Details" tab.
 * **Do NOT include the `.exe` extension.** (Note: The engine will auto-strip `.exe` if accidentally included, but standard practice is to omit it).
 * *Correct:* `"WINWORD"` | *Incorrect:* `"WINWORD.exe"`
 
-### 5. True Service Names
+### 6. True Service Names
 When listing background services, you must use the internal **Service Name**, not the "Display Name" shown in the Windows GUI. 
 * To find the true name, open `services.msc`, right-click a service -> Properties, and look at the "Service name:" field at the top.
 * *Correct:* `"wuauserv"` | *Incorrect:* `"Windows Update"`
 
-### 6. Firewall Groups
+### 7. Firewall Groups
 The `firewall_groups` array controls Windows Firewall rule groups by exact Display Group name. During Start, the engine enables each group; during Stop, it disables each group.
 * Use exact Display Group strings as shown in Windows Defender Firewall with Advanced Security.
 * Commands used by the engine:
   * `Enable-NetFirewallRule -DisplayGroup "Name"`
   * `Disable-NetFirewallRule -DisplayGroup "Name"`
 * *Example:* `"firewall_groups": ["File and Printer Sharing", "Core Networking"]`
+
+### 8. Global Shortcut Prefixes (`_config`)
+You can customize Start Menu shortcut prefixes globally through `_config`.
+
+* `shortcut_prefix_start` controls the prefix used for Start shortcuts.
+  * Default: `!Start-`
+* `shortcut_prefix_stop` controls the prefix used for Stop shortcuts.
+  * Default: `!Stop-`
+* Example:
+  * `"shortcut_prefix_start": "[BOOT]-"`
+  * `"shortcut_prefix_stop": "[HALT]-"`
+
+### 9. Optional Modifier (`?`) For Services And Executables
+Prefix a service or executable with `?` to mark it optional.
+
+* Services:
+  * `"?warp-svc"`
+* Executables:
+  * `"?C:/Tools/App.exe"`
+  * `"'?C:/Tools/App.exe' -arg"`
+* Behavior:
+  * If an optional item is missing on the host machine, the engine silently skips it.
+  * No prompt and no terminating error are raised for missing optional items.
