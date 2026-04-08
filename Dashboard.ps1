@@ -42,6 +42,63 @@ function Invoke-WorkspaceCommit {
     }
 }
 
+function Get-DashboardPostCommitMessages {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$UIStates,
+        [Parameter(Mandatory = $true)]
+        [psobject]$Workspaces
+    )
+
+    $messages = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($state in $UIStates) {
+        $action = $null
+        $eligible = $false
+
+        if ($state.Type -eq "oneshot") {
+            if ($state.DesiredState -eq "Run") {
+                $eligible = $true
+                $action = "Start"
+            }
+        } elseif ($state.DesiredState -ne $state.CurrentState -and $state.DesiredState -ne "Mixed") {
+            if ($state.DesiredState -eq "Ready") {
+                $eligible = $true
+                $action = "Start"
+            } elseif ($state.DesiredState -eq "Stopped") {
+                $eligible = $true
+                $action = "Stop"
+            }
+        }
+
+        if (-not $eligible) {
+            continue
+        }
+
+        $nameKey = [string]$state.Name
+        $wsData = Get-WorkspaceRootPropertyValue -Workspaces $Workspaces -WorkspaceName $nameKey
+        if ($null -eq $wsData) {
+            continue
+        }
+
+        $postChangeProp = $wsData.PSObject.Properties["post_change_message"]
+        if ($null -ne $postChangeProp -and $null -ne $postChangeProp.Value) {
+            $messages.Add("[$nameKey] $($postChangeProp.Value)")
+        }
+        $postStartProp = $wsData.PSObject.Properties["post_start_message"]
+        if ($action -eq "Start" -and $null -ne $postStartProp -and $null -ne $postStartProp.Value) {
+            $messages.Add("[$nameKey] $($postStartProp.Value)")
+        }
+        $postStopProp = $wsData.PSObject.Properties["post_stop_message"]
+        if ($action -eq "Stop" -and $null -ne $postStopProp -and $null -ne $postStopProp.Value) {
+            $messages.Add("[$nameKey] $($postStopProp.Value)")
+        }
+    }
+
+    return $messages.ToArray()
+}
+
 function Invoke-OrchestratorScript {
     [CmdletBinding()]
     param(
@@ -127,6 +184,34 @@ function Get-ActionableArrayProperties {
     )
 }
 
+function Get-WorkspaceRootPropertyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Workspaces,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$WorkspaceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkspaceName)) {
+        return $null
+    }
+
+    $prop = $Workspaces.PSObject.Properties[$WorkspaceName]
+    if ($null -ne $prop) {
+        return $prop.Value
+    }
+
+    foreach ($p in $Workspaces.PSObject.Properties) {
+        if ([string]::Equals($p.Name, $WorkspaceName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $p.Value
+        }
+    }
+
+    return $null
+}
+
 function Toggle-IgnoredValue {
     param(
         [Parameter(Mandatory = $true)]
@@ -161,7 +246,13 @@ function New-WorkspaceEditorItems {
             }
         }
     }
-    return $items
+    # Windows PowerShell 5.1 unwraps a single-element return value to the element itself; under StrictMode,
+    # PSCustomObject has no .Count and the Editor loop throws. Preserve a real Object[] for 0–1 items.
+    $arr = [object[]]$items
+    if ($arr.Length -le 1) {
+        return ,@($arr)
+    }
+    return $arr
 }
 
 function Set-WorkspaceEditorSelectionIgnored {
@@ -177,11 +268,10 @@ function Set-WorkspaceEditorSelectionIgnored {
         [string]$WorkspacePath
     )
 
-    $workspaceNode = $Workspaces.PSObject.Properties[$WorkspaceName]
-    if ($null -eq $workspaceNode) {
+    $workspaceData = Get-WorkspaceRootPropertyValue -Workspaces $Workspaces -WorkspaceName $WorkspaceName
+    if ($null -eq $workspaceData) {
         throw "Workspace '$WorkspaceName' not found in loaded configuration."
     }
-    $workspaceData = $workspaceNode.Value
     $propertyName = [string]$EditorSelection.Property
     $propertyNode = $workspaceData.PSObject.Properties[$propertyName]
     if ($null -eq $propertyNode) {
@@ -199,6 +289,40 @@ function Set-WorkspaceEditorSelectionIgnored {
     $workspaceData.$propertyName = @($values)
     $EditorSelection.Value = $newValue
     $Workspaces | ConvertTo-Json -Depth 10 | Set-Content -Path $WorkspacePath
+}
+
+function Resolve-QuotedRelativeExecutionToken {
+    param([Parameter(Mandatory)][string]$ExecutionToken)
+    $root = $PSScriptRoot
+    $wsJson = Join-Path -Path $root -ChildPath "workspaces.json"
+    if (Test-Path -LiteralPath $wsJson) {
+        $root = [System.IO.Path]::GetDirectoryName($wsJson)
+    }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    [regex]::Replace($ExecutionToken, "^'\.[\/\\](.*?)'", {
+        param($match)
+        $relativeRemainder = $match.Groups[1].Value -replace '/', $sep
+        "'" + (Join-Path $root $relativeRemainder) + "'"
+    })
+}
+
+function Resolve-RepoRelativeFilePath {
+    param([Parameter(Mandatory)][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+    $root = $PSScriptRoot
+    $wsJson = Join-Path -Path $root -ChildPath "workspaces.json"
+    if (Test-Path -LiteralPath $wsJson) {
+        $root = [System.IO.Path]::GetDirectoryName($wsJson)
+    }
+    $t = $Path.Trim()
+    if ($t.Length -ge 2 -and $t[0] -eq [char]'.' -and ($t[1] -eq [char]'/' -or $t[1] -eq '\')) {
+        $rest = $t.Substring(2).TrimStart([char[]]@('/', '\'))
+        $rest = $rest -replace '/', [System.IO.Path]::DirectorySeparatorChar
+        return (Join-Path $root $rest)
+    }
+    return $Path
 }
 
 function Get-WorkspaceDetails {
@@ -243,15 +367,19 @@ function Get-WorkspaceDetails {
                 }
                 continue
             }
-            $filePath = $exeText
-            if ($exeText -match "^'(.*?)'\s*(.*)$") { $filePath = $matches[1] }
-            if ($filePath.StartsWith("?")) { $filePath = $filePath.Substring(1) }
-            $leafName = Split-Path -Path $filePath -Leaf
-            $cleanName = $leafName -replace "\.exe$", ""
-            $proc = Get-Process -Name $cleanName -ErrorAction SilentlyContinue
-            if ($null -ne $proc) {
-                $details += [pscustomobject]@{ Type = "[Exe]"; Name = "$cleanName.exe"; IsRunning = $true }
+            $resolvedExeText = Resolve-QuotedRelativeExecutionToken -ExecutionToken $exeText
+            if ($resolvedExeText -match "^'(.*?)'\s*(.*)$") {
+                $filePath = $matches[1]
+            } else {
+                $filePath = ($resolvedExeText.Split([char[]]@(' '), [System.StringSplitOptions]::RemoveEmptyEntries) | Select-Object -First 1)
             }
+            if ([string]::IsNullOrWhiteSpace($filePath)) { continue }
+            if ($filePath.StartsWith("?")) { $filePath = $filePath.Substring(1) }
+            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
+            $exeName = [System.IO.Path]::GetFileNameWithoutExtension($filePath)
+            if ([string]::IsNullOrWhiteSpace($exeName)) { continue }
+            $proc = Get-Process -Name $exeName -ErrorAction SilentlyContinue
+            $details += [pscustomobject]@{ Type = "[Exe]"; Name = "$exeName.exe"; IsRunning = ($null -ne $proc) }
         }
     }
 
@@ -307,13 +435,13 @@ function Get-WorkspaceDetails {
             if ($null -eq $item) { continue }
             $pathProp = $item.PSObject.Properties["path"]
             $nameProp = $item.PSObject.Properties["name"]
-            $valueProp = $item.PSObject.Properties["value"]
-            if ($null -eq $pathProp -or $null -eq $nameProp -or $null -eq $valueProp) { continue }
+            $valueStartProp = $item.PSObject.Properties["value_start"]
+            if ($null -eq $pathProp -or $null -eq $nameProp -or $null -eq $valueStartProp) { continue }
             $regPath = [string]$pathProp.Value
             $regName = [string]$nameProp.Value
             if ([string]::IsNullOrWhiteSpace($regPath) -or [string]::IsNullOrWhiteSpace($regName)) { continue }
             if ($regName.StartsWith("?")) { $regName = $regName.Substring(1) }
-            $expectedValue = $valueProp.Value
+            $expectedValue = $valueStartProp.Value
             $val = Get-ItemPropertyValue -Path $regPath -Name $regName -ErrorAction SilentlyContinue
             $details += [pscustomobject]@{ Type = "[Reg]"; Name = $regName; IsRunning = ($val -eq $expectedValue) }
         }
@@ -349,6 +477,7 @@ function Get-UIStatesFromWorkspaces {
         if ($null -ne $tagsProperty) {
             $tags = @($tagsProperty.Value | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
         }
+        $desc = if ($null -ne $workspaceData.PSObject.Properties["description"]) { $workspaceData.description } else { "" }
         $current = if ($type -eq "oneshot") { "Idle" } else { Get-WorkspaceState -Workspace $workspaceData -PnpCache $PnpCache }
         $details = Get-WorkspaceDetails -WorkspaceData $workspaceData -PnpCache $PnpCache -ShowIgnored:$ShowIgnored
         $states += [pscustomobject]@{
@@ -358,6 +487,7 @@ function Get-UIStatesFromWorkspaces {
             Details      = $details
             Tags         = $tags
             Type         = $type
+            Description  = $desc
         }
     }
     return $states
@@ -369,7 +499,7 @@ function Start-Dashboard {
         throw "Fatal: workspaces.json not found."
     }
 
-    $workspaces = Get-Content -Path $jsonPath -Raw | ConvertFrom-Json
+    $workspaces = Get-Content -Path $jsonPath -Raw -Encoding utf8 | ConvertFrom-Json
     Write-Host "Scanning hardware devices..." -ForegroundColor DarkGray
     $globalPnpCache = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue
     $showIgnored = $false
@@ -488,10 +618,20 @@ function Start-Dashboard {
                 }
 
                 Write-Host ""
-                Write-Host "[Up/Down] Navigate  |  [Space] Toggle desired  |  [Backspace] Clear desired"
-                Write-Host "[Right] Edit Workspace  |  [F1] Toggle Details"
-                Write-Host "[F2] Toggle Ignored: $showIgnored |  [Esc] Cancel"
-                Write-Host "[Enter] Commit & Exit"
+                if ($visibleStates.Count -gt 0) {
+                    $selected = $visibleStates[$cursorIndex]
+                    if (-not [string]::IsNullOrWhiteSpace($selected.Description)) {
+                        $infoMark = [char]0x24D8
+                        Write-Host ('  {0}  {1}' -f $infoMark, $selected.Description) -ForegroundColor Cyan
+                    } else {
+                        Write-Host ""
+                    }
+                } else {
+                    Write-Host ""
+                }
+                Write-Host ""
+                Write-Host '[Up/Down] Nav | [Right] Edit | [Space] Toggle | [Bksp] Clear' -ForegroundColor Gray
+                Write-Host ('[F1] Details  | [F2] Ignored: ' + $showIgnored + ' | [Enter] Commit | [Esc] Cancel') -ForegroundColor Gray
             } elseif ($MenuState -eq "Editor") {
                 Clear-Host
                 Write-Host "=== EDITING: $($activeWorkspace.Name) ==="
@@ -511,7 +651,7 @@ function Start-Dashboard {
                     }
                 }
                 Write-Host ""
-                Write-Host "[Up/Down] Navigate | [Space] Toggle Ignore | [Left] Back"
+                Write-Host '[Up/Down] Nav | [Space] Toggle Ignore | [Left] Back' -ForegroundColor Gray
             }
             $needsRedraw = $false
         }
@@ -535,8 +675,34 @@ function Start-Dashboard {
                 "RightArrow" {
                     if ($visibleStates.Count -eq 0) { continue }
                     $activeWorkspace = $visibleStates[$cursorIndex]
-                    $workspaceData = $workspaces.PSObject.Properties[$activeWorkspace.Name].Value
-                    $editorItems = New-WorkspaceEditorItems -WorkspaceData $workspaceData
+                    $wkName = [string]$activeWorkspace.Name
+                    $workspaceData = Get-WorkspaceRootPropertyValue -Workspaces $workspaces -WorkspaceName $wkName
+                    if ($null -eq $workspaceData) {
+                        Clear-Host
+                        Write-Host "Cannot open editor: workspace '$wkName' is missing from the loaded configuration." -ForegroundColor Red
+                        Write-Host "Press any key to return..." -ForegroundColor Gray
+                        try {
+                            [Console]::ReadKey($true) | Out-Null
+                        } catch {
+                            Start-Sleep -Seconds 2
+                        }
+                        $needsRedraw = $true
+                        continue
+                    }
+                    try {
+                        $editorItems = New-WorkspaceEditorItems -WorkspaceData $workspaceData
+                    } catch {
+                        Clear-Host
+                        Write-Host "Cannot open editor for '$wkName': $($_.Exception.Message)" -ForegroundColor Red
+                        Write-Host "Press any key to return..." -ForegroundColor Gray
+                        try {
+                            [Console]::ReadKey($true) | Out-Null
+                        } catch {
+                            Start-Sleep -Seconds 2
+                        }
+                        $needsRedraw = $true
+                        continue
+                    }
                     $MenuState = "Editor"
                     $cursorIndex = 0
                 }
@@ -617,7 +783,21 @@ function Start-Dashboard {
     Write-Host "Committing state changes..."
     $OrchestratorPath = Join-Path -Path $PSScriptRoot -ChildPath "Orchestrator.ps1"
     Invoke-WorkspaceCommit -UIStates $UIStates -OrchestratorPath $OrchestratorPath
-    Write-Host "[ SUCCESS ] Workspaces updated."
+
+    $pendingMessages = @(Get-DashboardPostCommitMessages -UIStates $UIStates -Workspaces $workspaces)
+    if ($pendingMessages.Count -gt 0) {
+        Write-Host ""
+        Write-Host "=== REQUIRED ACTIONS ===" -ForegroundColor Yellow
+        foreach ($msg in $pendingMessages) {
+            Write-Host $msg -ForegroundColor Cyan
+        }
+        Write-Host ""
+        Write-Host "Press any key to exit..." -ForegroundColor White
+        [Console]::ReadKey($true) | Out-Null
+        exit
+    }
+
+    Write-Host '[ SUCCESS ] Workspaces updated.'
     Start-Sleep -Seconds 2
     exit
 }

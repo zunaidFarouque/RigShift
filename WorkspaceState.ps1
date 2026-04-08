@@ -1,3 +1,37 @@
+function Resolve-QuotedRelativeExecutionToken {
+    param([Parameter(Mandatory)][string]$ExecutionToken)
+    $root = $PSScriptRoot
+    $wsJson = Join-Path -Path $root -ChildPath "workspaces.json"
+    if (Test-Path -LiteralPath $wsJson) {
+        $root = [System.IO.Path]::GetDirectoryName($wsJson)
+    }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    [regex]::Replace($ExecutionToken, "^'\.[\/\\](.*?)'", {
+        param($match)
+        $relativeRemainder = $match.Groups[1].Value -replace '/', $sep
+        "'" + (Join-Path $root $relativeRemainder) + "'"
+    })
+}
+
+function Resolve-RepoRelativeFilePath {
+    param([Parameter(Mandatory)][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+    $root = $PSScriptRoot
+    $wsJson = Join-Path -Path $root -ChildPath "workspaces.json"
+    if (Test-Path -LiteralPath $wsJson) {
+        $root = [System.IO.Path]::GetDirectoryName($wsJson)
+    }
+    $t = $Path.Trim()
+    if ($t.Length -ge 2 -and $t[0] -eq [char]'.' -and ($t[1] -eq [char]'/' -or $t[1] -eq '\')) {
+        $rest = $t.Substring(2).TrimStart([char[]]@('/', '\'))
+        $rest = $rest -replace '/', [System.IO.Path]::DirectorySeparatorChar
+        return (Join-Path $root $rest)
+    }
+    return $Path
+}
+
 function Get-WorkspaceState {
     [CmdletBinding()]
     param(
@@ -11,6 +45,7 @@ function Get-WorkspaceState {
         return "Idle"
     }
 
+    # Count only actionable/runtime state: services, executables, PnP, power plan, registry — not scripts_* or protected_processes.
     $totalServices = 0
     $runningServices = 0
     $totalExecutables = 0
@@ -59,8 +94,9 @@ function Get-WorkspaceState {
                 continue
             }
 
-            $filePath = $executionToken
-            if ($executionToken -match "^'(.*?)'\s*(.*)$") {
+            $resolvedToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken $executionToken
+            $filePath = $resolvedToken
+            if ($resolvedToken -match "^'(.*?)'\s*(.*)$") {
                 $filePath = $matches[1]
             }
 
@@ -68,6 +104,8 @@ function Get-WorkspaceState {
             if ($isOptional) {
                 $filePath = $filePath.Substring(1)
             }
+
+            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
 
             $leafName = Split-Path -Path $filePath -Leaf
             $cleanName = $leafName -replace "\.exe$", ""
@@ -139,12 +177,12 @@ function Get-WorkspaceState {
             if ($null -eq $item) { continue }
             $pathProp = $item.PSObject.Properties["path"]
             $nameProp = $item.PSObject.Properties["name"]
-            $valueProp = $item.PSObject.Properties["value"]
-            if ($null -eq $pathProp -or $null -eq $nameProp -or $null -eq $valueProp) { continue }
+            $valueStartProp = $item.PSObject.Properties["value_start"]
+            if ($null -eq $pathProp -or $null -eq $nameProp -or $null -eq $valueStartProp) { continue }
 
             $path = [string]$pathProp.Value
             $name = [string]$nameProp.Value
-            $expectedValue = $valueProp.Value
+            $expectedValue = $valueStartProp.Value
             if ([string]::IsNullOrWhiteSpace($path) -or [string]::IsNullOrWhiteSpace($name)) { continue }
 
             $totalItems++

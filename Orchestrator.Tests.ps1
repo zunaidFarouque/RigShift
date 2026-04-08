@@ -382,8 +382,33 @@ Describe "Phase 3 - The Start Pipeline" {
 
         { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
 
+        $expectedExe = [System.IO.Path]::GetFullPath("C:/My App.exe")
         Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
-            $FilePath -eq "C:/My App.exe" -and $ArgumentList -eq "--hidden"
+            $FilePath -eq $expectedExe -and $ArgumentList -eq "--hidden"
+        }
+    }
+
+    It "resolves quoted relative executable path against PSScriptRoot before Start-Process" {
+        # JSON cannot contain a raw `.\CustomScripts\...` substring (`\C` is an invalid escape); `./...` is equivalent for the engine.
+        $expectedExe = Join-Path -Path $script:here -ChildPath "CustomScripts\test.exe"
+        @'
+{
+  "Audio_Production": {
+    "executables": ["'./CustomScripts/test.exe' --arg"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName gsudo -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        $expectedResolved = [System.IO.Path]::GetFullPath($expectedExe)
+        Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $FilePath -eq $expectedResolved -and $ArgumentList -eq "--arg"
         }
     }
 
@@ -403,7 +428,8 @@ Describe "Phase 3 - The Start Pipeline" {
 
         { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
 
-        Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter { $FilePath -eq "C:/App.exe" }
+        $expectedApp = [System.IO.Path]::GetFullPath("C:/App.exe")
+        Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter { $FilePath -eq $expectedApp }
     }
 
     It "skips optional missing executable on Start and does not call Start-Process" {
@@ -419,7 +445,7 @@ Describe "Phase 3 - The Start Pipeline" {
         Mock -CommandName Start-Sleep -MockWith { }
         Mock -CommandName Start-Process -MockWith { }
         Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
-        Mock -CommandName Test-Path -MockWith { $false } -ParameterFilter { $Path -eq "C:/Missing/App.exe" }
+        Mock -CommandName Test-Path -MockWith { $false } -ParameterFilter { $LiteralPath -eq "C:/Missing/App.exe" }
 
         { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
 
@@ -440,9 +466,11 @@ Describe "Phase 3 - The Start Pipeline" {
 
         { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
 
+        $startScriptFull = [System.IO.Path]::GetFullPath("C:/StartScript.ps1")
+        $expectedPwshArgs = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startScriptFull`" -Verb"
         Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
             $FilePath -eq "pwsh.exe" -and
-            $ArgumentList -eq '-WindowStyle Hidden -ExecutionPolicy Bypass -File "C:/StartScript.ps1" -Verb' -and
+            $ArgumentList -eq $expectedPwshArgs -and
             $Wait -eq $true -and
             $NoNewWindow -eq $true
         }
@@ -494,7 +522,7 @@ Describe "Phase 3 - The Start Pipeline" {
     "pnp_devices_disable": ["Bluetooth"],
     "power_plan": "High performance",
     "registry_toggles": [
-      { "path": "HKLM:\\SOFTWARE\\Contoso", "name": "LowLatency", "value": 1, "type": "DWord" }
+      { "path": "HKLM:\\SOFTWARE\\Contoso", "name": "LowLatency", "value_start": 1, "type": "DWord" }
     ]
   }
 }
@@ -527,6 +555,11 @@ Describe "Phase 3 - The Start Pipeline" {
         })
         $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "USB Audio" -ErrorAction SilentlyContinue | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
         $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "Bluetooth" -ErrorAction SilentlyContinue | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
+        $pnpEncodedGsudo = @($global:gsudoCalls | Where-Object { $_ -match '-NoProfile -EncodedCommand' })
+        $pnpEncodedGsudo.Count | Should -Be 2
+        foreach ($line in $pnpEncodedGsudo) {
+            $line | Should -Match '\s-EncodedCommand\s+\S+'
+        }
         $global:gsudoCalls | Should -Contain "New-ItemProperty -Path HKLM:\SOFTWARE\Contoso -Name LowLatency -Value 1 -PropertyType DWord -Force"
         $global:powercfgCalls | Should -Contain "/l"
         $global:powercfgCalls | Should -Contain "/setactive 11111111-2222-3333-4444-555555555555"
@@ -587,6 +620,44 @@ Describe "Phase 3 - The Start Pipeline" {
         Assert-MockCalled -CommandName Get-Service -Times 0 -Exactly
         Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
         Assert-MockCalled -CommandName gsudo -Times 0 -Exactly
+    }
+
+    It "runs EncodedCommand gsudo only for non-ignored PnP entries when # is mixed with active names on Start" {
+        @'
+{
+  "Audio_Production": {
+    "pnp_devices_enable": ["USB Audio", "#*Camera*"],
+    "pnp_devices_disable": ["Bluetooth"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName gsudo -Times 2 -Exactly
+        $pnpEncodedGsudo = @($global:gsudoCalls | Where-Object { $_ -match '-NoProfile -EncodedCommand' })
+        $pnpEncodedGsudo.Count | Should -Be 2
+        foreach ($line in $pnpEncodedGsudo) {
+            $line | Should -Match '\s-EncodedCommand\s+\S+'
+        }
+        $decodedPnp = @($pnpEncodedGsudo | ForEach-Object {
+            if ($_ -match '^powershell -NoProfile -EncodedCommand (\S+)$') {
+                [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($matches[1]))
+            }
+        })
+        $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "USB Audio" -ErrorAction SilentlyContinue | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
+        $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "Bluetooth" -ErrorAction SilentlyContinue | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
+        ($decodedPnp -join "`n") | Should -Not -Match '\*Camera\*|FriendlyName ".*Camera'
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
     }
 }
 
@@ -726,8 +797,9 @@ Describe "Phase 4 - The Stop Pipeline" {
 
         { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Stop" | Out-Null } | Should -Not -Throw
 
+        $expectedBat = [System.IO.Path]::GetFullPath("C:/StopScript.bat")
         Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
-            $FilePath -eq "C:/StopScript.bat" -and
+            $FilePath -eq $expectedBat -and
             $Wait -eq $true -and
             $NoNewWindow -eq $true
         }
@@ -755,7 +827,7 @@ Describe "Phase 4 - The Stop Pipeline" {
         Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
     }
 
-    It "inverts PnP device targets on Stop and warns for non-reverted power/registry" {
+    It "inverts PnP device targets on Stop, warns for non-reverted power plan only, and reverts registry when value_stop is set" {
         @'
 {
   "Audio_Production": {
@@ -763,7 +835,7 @@ Describe "Phase 4 - The Stop Pipeline" {
     "pnp_devices_disable": ["Bluetooth"],
     "power_plan": "High performance",
     "registry_toggles": [
-      { "path": "HKLM:\\SOFTWARE\\Contoso", "name": "LowLatency", "value": 1, "type": "DWord" }
+      { "path": "HKLM:\\SOFTWARE\\Contoso", "name": "LowLatency", "value_start": 1, "value_stop": 0, "type": "DWord" }
     ]
   }
 }
@@ -789,10 +861,126 @@ Describe "Phase 4 - The Stop Pipeline" {
         })
         $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "USB Audio" -ErrorAction SilentlyContinue | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
         $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "Bluetooth" -ErrorAction SilentlyContinue | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
+        $pnpEncodedGsudo = @($global:gsudoCalls | Where-Object { $_ -match '-NoProfile -EncodedCommand' })
+        $pnpEncodedGsudo.Count | Should -Be 2
+        foreach ($line in $pnpEncodedGsudo) {
+            $line | Should -Match '\s-EncodedCommand\s+\S+'
+        }
+        $global:gsudoCalls | Should -Contain "New-ItemProperty -Path HKLM:\SOFTWARE\Contoso -Name LowLatency -Value 0 -PropertyType DWord -Force"
         Assert-MockCalled -CommandName Write-Host -Times 1 -ParameterFilter {
-            $Object -eq "Note: Power Plan and Registry toggles are not automatically reverted on Stop. Use a Recovery workspace." -and
+            $Object -eq "Note: Power plans are not automatically reverted on Stop. Use a Recovery workspace." -and
             $ForegroundColor -eq "Yellow"
         }
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "on Stop calls gsudo New-ItemProperty with value_stop when value_stop is provided" {
+        @'
+{
+  "Audio_Production": {
+    "protected_processes": [],
+    "registry_toggles": [
+      { "path": "HKLM:\\SOFTWARE\\Contoso", "name": "LowLatency", "value_start": 1, "value_stop": 0, "type": "DWord" }
+    ]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Write-Host -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Stop" | Out-Null } | Should -Not -Throw
+
+        $regGsudo = @($global:gsudoCalls | Where-Object { $_ -match 'New-ItemProperty' })
+        $regGsudo.Count | Should -Be 1
+        $regGsudo[0] | Should -Be "New-ItemProperty -Path HKLM:\SOFTWARE\Contoso -Name LowLatency -Value 0 -PropertyType DWord -Force"
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "on Stop does not call gsudo New-ItemProperty for registry toggles when value_stop is missing or null" {
+        @'
+{
+  "Audio_Production": {
+    "protected_processes": [],
+    "registry_toggles": [
+      { "path": "HKLM:\\SOFTWARE\\Alpha", "name": "KeyA", "value_start": 1, "type": "DWord" },
+      { "path": "HKLM:\\SOFTWARE\\Beta", "name": "KeyB", "value_start": 2, "value_stop": null, "type": "DWord" }
+    ]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Write-Host -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Stop" | Out-Null } | Should -Not -Throw
+
+        $regGsudo = @($global:gsudoCalls | Where-Object { $_ -match 'New-ItemProperty' })
+        $regGsudo.Count | Should -Be 0
+        Assert-MockCalled -CommandName Write-Host -Times 1 -ParameterFilter {
+            $Object -eq "Note: Registry toggle 'KeyA' has no value_stop defined. Skipping reversion." -and
+            $ForegroundColor -eq "Yellow"
+        }
+        Assert-MockCalled -CommandName Write-Host -Times 1 -ParameterFilter {
+            $Object -eq "Note: Registry toggle 'KeyB' has no value_stop defined. Skipping reversion." -and
+            $ForegroundColor -eq "Yellow"
+        }
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "runs EncodedCommand gsudo only for non-ignored PnP entries when # is mixed with active names on Stop" {
+        @'
+{
+  "Audio_Production": {
+    "protected_processes": [],
+    "pnp_devices_enable": ["USB Audio", "#*Camera*"],
+    "pnp_devices_disable": ["Bluetooth"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Stop" | Out-Null } | Should -Not -Throw
+
+        Assert-MockCalled -CommandName gsudo -Times 2 -Exactly
+        $pnpEncodedGsudo = @($global:gsudoCalls | Where-Object { $_ -match '-NoProfile -EncodedCommand' })
+        $pnpEncodedGsudo.Count | Should -Be 2
+        foreach ($line in $pnpEncodedGsudo) {
+            $line | Should -Match '\s-EncodedCommand\s+\S+'
+        }
+        $decodedPnp = @($pnpEncodedGsudo | ForEach-Object {
+            if ($_ -match '^powershell -NoProfile -EncodedCommand (\S+)$') {
+                [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($matches[1]))
+            }
+        })
+        $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "USB Audio" -ErrorAction SilentlyContinue | Disable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
+        $decodedPnp | Should -Contain 'Get-PnpDevice -FriendlyName "Bluetooth" -ErrorAction SilentlyContinue | Enable-PnpDevice -Confirm:$false -ErrorAction SilentlyContinue'
+        ($decodedPnp -join "`n") | Should -Not -Match '\*Camera\*|FriendlyName ".*Camera'
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
     }
 

@@ -133,10 +133,10 @@ Describe "Workspace State Analyzer" {
             power_plan          = "High performance"
             registry_toggles    = @(
                 [pscustomobject]@{
-                    path  = "HKLM:\SOFTWARE\Contoso"
-                    name  = "LowLatency"
-                    value = 1
-                    type  = "DWord"
+                    path         = "HKLM:\SOFTWARE\Contoso"
+                    name         = "LowLatency"
+                    value_start  = 1
+                    type         = "DWord"
                 }
             )
         }
@@ -215,6 +215,50 @@ Describe "Workspace State Analyzer" {
         $state | Should -Be "Ready"
         Assert-MockCalled -CommandName Get-Service -Times 1 -Exactly -ParameterFilter { $Name -eq "Audiosrv" }
         Assert-MockCalled -CommandName Get-Process -Times 1 -Exactly -ParameterFilter { $Name -eq "App" }
+        Assert-MockCalled -CommandName Get-CimInstance -Times 0 -Exactly
+    }
+
+    It "excludes #Spooler and #*Biometric* from state math and never queries ignored services" {
+        $workspace = [pscustomobject]@{
+            services            = @("Audiosrv", "#Spooler")
+            executables         = @("C:/Tools/App.exe")
+            pnp_devices_disable = @("*Bluetooth*", "#*Biometric*")
+        }
+        $pnpCache = @(
+            [pscustomobject]@{ Name = "Bluetooth Radio"; Status = "Error" }
+        )
+
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+        Mock -CommandName Get-Process -MockWith { [pscustomobject]@{ Name = "App" } }
+        Mock -CommandName Get-CimInstance -MockWith { throw "Get-CimInstance should not be called when cache is provided" }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $state = Get-WorkspaceState -Workspace $workspace -PnpCache $pnpCache
+
+        $state | Should -Be "Ready"
+        Assert-MockCalled -CommandName Get-Service -Times 1 -Exactly -ParameterFilter { $Name -eq "Audiosrv" }
+        Assert-MockCalled -CommandName Get-Service -Times 0 -Exactly -ParameterFilter { $Name -eq "Spooler" }
+        Assert-MockCalled -CommandName Get-CimInstance -Times 0 -Exactly
+    }
+
+    It "uses PnpCache for enable-only PnP list without calling Get-CimInstance" {
+        $workspace = [pscustomobject]@{
+            pnp_devices_enable = @("USB Audio*")
+        }
+        $pnpCache = @(
+            [pscustomobject]@{ Name = "USB Audio Device"; Status = "OK" }
+        )
+
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Stopped" } }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Get-CimInstance -MockWith { throw "Get-CimInstance should not be called when cache is provided" }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $state = Get-WorkspaceState -Workspace $workspace -PnpCache $pnpCache
+
+        $state | Should -Be "Ready"
         Assert-MockCalled -CommandName Get-CimInstance -Times 0 -Exactly
     }
 }

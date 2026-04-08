@@ -49,8 +49,10 @@ if (-not (Test-Path -Path $dbPath -PathType Leaf)) {
     throw "Fatal: workspaces.json not found."
 }
 
+$script:OrchestratorRepoRoot = [System.IO.Path]::GetDirectoryName($dbPath)
+
 try {
-    $workspaces = Get-Content -Path $dbPath -Raw | ConvertFrom-Json
+    $workspaces = Get-Content -Path $dbPath -Raw -Encoding utf8 | ConvertFrom-Json
 } catch {
     $parseDetail = $_.Exception.Message
     throw "Fatal: Failed to parse workspaces.json. $parseDetail"
@@ -118,6 +120,66 @@ if ($Action -eq "Stop") {
         if ($ans -match "^[Nn]$") {
             throw "Abort: User cancelled teardown due to active protected process."
         }
+    }
+}
+
+function Resolve-QuotedRelativeExecutionToken {
+    param([Parameter(Mandatory)][string]$ExecutionToken)
+    $root = $script:OrchestratorRepoRoot
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        $root = $PSScriptRoot
+    }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    [regex]::Replace($ExecutionToken, "^'\.[\/\\](.*?)'", {
+        param($match)
+        $relativeRemainder = $match.Groups[1].Value -replace '/', $sep
+        "'" + (Join-Path $root $relativeRemainder) + "'"
+    })
+}
+
+function Resolve-RepoRelativeFilePath {
+    param([Parameter(Mandatory)][string]$Path)
+    $root = $script:OrchestratorRepoRoot
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        $root = $PSScriptRoot
+    }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+    $t = $Path.Trim()
+    if ($t.Length -ge 2 -and $t[0] -eq [char]'.' -and ($t[1] -eq [char]'/' -or $t[1] -eq '\')) {
+        $rest = $t.Substring(2).TrimStart([char[]]@('/', '\'))
+        $rest = $rest -replace '/', [System.IO.Path]::DirectorySeparatorChar
+        return (Join-Path $root $rest)
+    }
+    return $Path
+}
+
+function Start-ShortcutOrUrlShellExecute {
+    param(
+        [Parameter(Mandatory)][string]$ItemPath,
+        [string]$Arguments,
+        [switch]$Wait
+    )
+    $full = [System.IO.Path]::GetFullPath($ItemPath)
+    $dir = [System.IO.Path]::GetDirectoryName($full)
+    if ([string]::IsNullOrWhiteSpace($dir)) {
+        $dir = $script:OrchestratorRepoRoot
+        if ([string]::IsNullOrWhiteSpace($dir)) {
+            $dir = $PSScriptRoot
+        }
+    }
+    # Start-Process -FilePath treats () as wildcards. Use ShellExecute via ProcessStartInfo (works on PS 5.1+ and avoids Pester mocks that omit -LiteralPath).
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $full
+    $psi.WorkingDirectory = $dir
+    $psi.UseShellExecute = $true
+    if (-not [string]::IsNullOrWhiteSpace($Arguments)) {
+        $psi.Arguments = $Arguments
+    }
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if ($Wait -and $null -ne $proc) {
+        $proc.WaitForExit()
     }
 }
 
@@ -190,7 +252,7 @@ if ($Action -eq "Start") {
                 continue
             }
 
-            $executionToken = [string]$scriptItem
+            $executionToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken ([string]$scriptItem)
             $filePath = $executionToken
             $argumentList = ""
 
@@ -203,6 +265,8 @@ if ($Action -eq "Start") {
             if ($isOptionalScript) {
                 $filePath = $filePath.Substring(1)
             }
+
+            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
 
             if (-not (Test-Path -LiteralPath $filePath)) {
                 if ($isOptionalScript) {
@@ -217,6 +281,8 @@ if ($Action -eq "Start") {
                 continue
             }
 
+            $filePath = [System.IO.Path]::GetFullPath($filePath)
+
             if ($filePath -match '\.ps1$') {
                 $pwshArg = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$filePath`""
                 if (-not [string]::IsNullOrWhiteSpace($argumentList)) {
@@ -225,7 +291,15 @@ if ($Action -eq "Start") {
 
                 Start-Process -FilePath "pwsh.exe" -ArgumentList $pwshArg -Wait -NoNewWindow 2>&1 | Out-Null
             } else {
-                if ([string]::IsNullOrWhiteSpace($argumentList)) {
+                $ext = [System.IO.Path]::GetExtension($filePath).ToLowerInvariant()
+                $launchShortcutInOwnWindow = ($ext -eq '.lnk' -or $ext -eq '.url')
+                if ($launchShortcutInOwnWindow) {
+                    if ([string]::IsNullOrWhiteSpace($argumentList)) {
+                        Start-ShortcutOrUrlShellExecute -ItemPath $filePath -Wait
+                    } else {
+                        Start-ShortcutOrUrlShellExecute -ItemPath $filePath -Arguments $argumentList -Wait
+                    }
+                } elseif ([string]::IsNullOrWhiteSpace($argumentList)) {
                     Start-Process -FilePath $filePath -Wait -NoNewWindow 2>&1 | Out-Null
                 } else {
                     Start-Process -FilePath $filePath -ArgumentList $argumentList -Wait -NoNewWindow 2>&1 | Out-Null
@@ -279,10 +353,10 @@ if ($Action -eq "Start") {
             if ($null -eq $item) { continue }
             $pathProp = $item.PSObject.Properties["path"]
             $nameProp = $item.PSObject.Properties["name"]
-            $valueProp = $item.PSObject.Properties["value"]
+            $valueStartProp = $item.PSObject.Properties["value_start"]
             $typeProp = $item.PSObject.Properties["type"]
-            if ($null -eq $pathProp -or $null -eq $nameProp -or $null -eq $valueProp -or $null -eq $typeProp) { continue }
-            gsudo New-ItemProperty -Path $pathProp.Value -Name $nameProp.Value -Value $valueProp.Value -PropertyType $typeProp.Value -Force
+            if ($null -eq $pathProp -or $null -eq $nameProp -or $null -eq $valueStartProp -or $null -eq $typeProp) { continue }
+            gsudo New-ItemProperty -Path $pathProp.Value -Name $nameProp.Value -Value $valueStartProp.Value -PropertyType $typeProp.Value -Force 2>&1 | Out-Null
         }
     }
 
@@ -298,7 +372,7 @@ if ($Action -eq "Start") {
                 continue
             }
 
-            $executionToken = [string]$executableItem
+            $executionToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken ([string]$executableItem)
             $filePath = $executionToken
             $argumentList = ""
 
@@ -312,12 +386,22 @@ if ($Action -eq "Start") {
                 $filePath = $filePath.Substring(1)
             }
 
-            if ($isOptionalExecutable -and -not (Test-Path -Path $filePath)) {
+            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
+
+            if ($isOptionalExecutable -and -not (Test-Path -LiteralPath $filePath)) {
                 Write-Host "Skipping optional executable: $filePath" -ForegroundColor DarkYellow
                 continue
             }
 
-            if ([string]::IsNullOrWhiteSpace($argumentList)) {
+            $filePath = [System.IO.Path]::GetFullPath($filePath)
+            $exeExt = [System.IO.Path]::GetExtension($filePath).ToLowerInvariant()
+            if ($exeExt -eq '.lnk' -or $exeExt -eq '.url') {
+                if ([string]::IsNullOrWhiteSpace($argumentList)) {
+                    Start-ShortcutOrUrlShellExecute -ItemPath $filePath
+                } else {
+                    Start-ShortcutOrUrlShellExecute -ItemPath $filePath -Arguments $argumentList
+                }
+            } elseif ([string]::IsNullOrWhiteSpace($argumentList)) {
                 Start-Process -FilePath $filePath
             } else {
                 Start-Process -FilePath $filePath -ArgumentList $argumentList
@@ -343,7 +427,7 @@ if ($Action -eq "Stop") {
                 continue
             }
 
-            $executionToken = [string]$scriptItem
+            $executionToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken ([string]$scriptItem)
             $filePath = $executionToken
             $argumentList = ""
 
@@ -356,6 +440,8 @@ if ($Action -eq "Stop") {
             if ($isOptionalScript) {
                 $filePath = $filePath.Substring(1)
             }
+
+            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
 
             if (-not (Test-Path -LiteralPath $filePath)) {
                 if ($isOptionalScript) {
@@ -370,6 +456,8 @@ if ($Action -eq "Stop") {
                 continue
             }
 
+            $filePath = [System.IO.Path]::GetFullPath($filePath)
+
             if ($filePath -match '\.ps1$') {
                 $pwshArg = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$filePath`""
                 if (-not [string]::IsNullOrWhiteSpace($argumentList)) {
@@ -378,7 +466,15 @@ if ($Action -eq "Stop") {
 
                 Start-Process -FilePath "pwsh.exe" -ArgumentList $pwshArg -Wait -NoNewWindow 2>&1 | Out-Null
             } else {
-                if ([string]::IsNullOrWhiteSpace($argumentList)) {
+                $ext = [System.IO.Path]::GetExtension($filePath).ToLowerInvariant()
+                $launchShortcutInOwnWindow = ($ext -eq '.lnk' -or $ext -eq '.url')
+                if ($launchShortcutInOwnWindow) {
+                    if ([string]::IsNullOrWhiteSpace($argumentList)) {
+                        Start-ShortcutOrUrlShellExecute -ItemPath $filePath -Wait
+                    } else {
+                        Start-ShortcutOrUrlShellExecute -ItemPath $filePath -Arguments $argumentList -Wait
+                    }
+                } elseif ([string]::IsNullOrWhiteSpace($argumentList)) {
                     Start-Process -FilePath $filePath -Wait -NoNewWindow 2>&1 | Out-Null
                 } else {
                     Start-Process -FilePath $filePath -ArgumentList $argumentList -Wait -NoNewWindow 2>&1 | Out-Null
@@ -400,7 +496,7 @@ if ($Action -eq "Stop") {
                 continue
             }
 
-            $executionToken = [string]$executableItem
+            $executionToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken ([string]$executableItem)
             $filePath = $executionToken
             if ($executionToken -match "^'(.*?)'\s*(.*)$") {
                 $filePath = $matches[1]
@@ -408,6 +504,8 @@ if ($Action -eq "Stop") {
             if ($filePath.StartsWith("?")) {
                 $filePath = $filePath.Substring(1)
             }
+
+            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
 
             $exeName = Split-Path -Path $filePath -Leaf
             gsudo taskkill /F /IM $exeName /T 2>&1 | Out-Null
@@ -438,9 +536,31 @@ if ($Action -eq "Stop") {
     }
 
     $powerPlanProperty = $workspace.PSObject.Properties["power_plan"]
+    if ($null -ne $powerPlanProperty -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanProperty.Value)) {
+        Write-Host "Note: Power plans are not automatically reverted on Stop. Use a Recovery workspace." -ForegroundColor Yellow
+    }
+
     $registryTogglesProperty = $workspace.PSObject.Properties["registry_toggles"]
-    if ($null -ne $powerPlanProperty -or $null -ne $registryTogglesProperty) {
-        Write-Host "Note: Power Plan and Registry toggles are not automatically reverted on Stop. Use a Recovery workspace." -ForegroundColor Yellow
+    if ($null -ne $registryTogglesProperty) {
+        foreach ($item in @($registryTogglesProperty.Value)) {
+            if ($null -eq $item) { continue }
+            $pathProp = $item.PSObject.Properties["path"]
+            $nameProp = $item.PSObject.Properties["name"]
+            $typeProp = $item.PSObject.Properties["type"]
+            $valueStopProp = $item.PSObject.Properties["value_stop"]
+            if ($null -eq $pathProp -or $null -eq $nameProp -or $null -eq $typeProp) { continue }
+
+            $stopVal = $null
+            if ($null -ne $valueStopProp) {
+                $stopVal = $valueStopProp.Value
+            }
+            if ($null -ne $stopVal) {
+                Write-Host "Reverting Registry Key: $($nameProp.Value)..." -ForegroundColor Cyan
+                gsudo New-ItemProperty -Path $pathProp.Value -Name $nameProp.Value -Value $stopVal -PropertyType $typeProp.Value -Force 2>&1 | Out-Null
+            } else {
+                Write-Host "Note: Registry toggle '$($nameProp.Value)' has no value_stop defined. Skipping reversion." -ForegroundColor Yellow
+            }
+        }
     }
 
     $servicesProperty = $workspace.PSObject.Properties["services"]

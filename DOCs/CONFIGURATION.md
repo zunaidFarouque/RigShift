@@ -23,7 +23,7 @@ To ensure the orchestration engine parses your environment flawlessly and safely
     "pnp_devices_enable": ["*USB Audio*"],
     "pnp_devices_disable": ["*Bluetooth*"],
     "registry_toggles": [
-      { "path": "HKLM:\\SOFTWARE\\Contoso\\Audio", "name": "LowLatency", "value": 1, "type": "DWord" }
+      { "path": "HKLM:\\SOFTWARE\\Contoso\\Audio", "name": "LowLatency", "value_start": 1, "value_stop": 0, "type": "DWord" }
     ],
     "services": [
       "eLicenserSvc",
@@ -32,13 +32,16 @@ To ensure the orchestration engine parses your environment flawlessly and safely
     ],
     "executables": [
       "'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe' --profile Live",
-      "C:\\Tools\\AudioMixer.exe"
+      "C:\\Tools\\AudioMixer.exe",
+      "'./CustomScripts/Set_Displays_60Hz.lnk'"
     ],
     "scripts_start": [
-      "'C:/Program Files/My Scripts/start.ps1' -Verb"
+      "'C:/Program Files/My Scripts/start.ps1' -Verb",
+      "'./CustomScripts/local-start.ps1'"
     ],
     "scripts_stop": [
-      "C:/Program Files/My Scripts/stop.bat"
+      "C:/Program Files/My Scripts/stop.bat",
+      "'./CustomScripts/local-stop.bat'"
     ],
     "protected_processes": [
       "Cubase12",
@@ -63,6 +66,10 @@ Windows file paths often contain spaces, and many applications require command-l
   `"C:/Tools/App.exe"`
 * **Spaces in Path or Adding Arguments:** You **MUST** wrap the executable path in single quotes (`'`), followed by a space, followed by your arguments. The engine will safely split these before execution.
   *Correct:* `"'C:/Program Files/My App/app.exe' --fullscreen -v"`
+* **Relative paths (quoted only):** For `executables`, `scripts_start`, and `scripts_stop`, you may use a path relative to the folder that contains `workspaces.json` and the WorkspaceManager `.ps1` scripts (`Orchestrator.ps1`, `WorkspaceState.ps1`, `Dashboard.ps1`). The path **MUST** be wrapped in single quotes and **MUST** start with `./` or `.\` immediately after the opening quote (before any other character).
+  *Correct:* `"'./CustomScripts/Set_Displays_60Hz.lnk'"` or `"'.\CustomScripts\Set_Displays_60Hz.lnk'"` (in JSON, double each backslash in the string value, e.g. `"'.\\CustomScripts\\Set_Displays_60Hz.lnk'"`).
+  The engine resolves that segment to an absolute path using `$PSScriptRoot` and `Join-Path` (normalizing `/` in the relative segment to platform directory separators) before `Test-Path`, `Start-Process`, or process lookup, so elevated helpers (for example `gsudo`) do not run with a working directory that breaks relative paths.
+  *Note:* A quoted path that begins with `'?./` / `'?.\` is not expanded; use an absolute path for optional items, or a non-relative form the engine already supports.
 
 ### 2. The Slash Rule (`\\` or `/`)
 If you copy and paste a file path directly from Windows Explorer, it will contain single backslashes (e.g., `C:\Program Files`). **This will crash the JSON parser.** JSON treats a single backslash as an escape character.
@@ -77,11 +84,12 @@ To prevent race conditions (e.g., an application crashing because its required b
 ### 4. Custom Synchronous Scripts (`scripts_start` / `scripts_stop`)
 Use these arrays to run custom synchronous scripts during orchestration.
 
-* **Syntax:** `scripts_start` and `scripts_stop` use the exact same *Execution String* rules as `executables`.
+* **Syntax:** `scripts_start` and `scripts_stop` use the exact same *Execution String* rules as `executables` (including **relative quoted paths** that start with `'./` or `'.\`; see §1).
   * No arguments and no spaces: just provide the path. `"C:/Tools/MyScript.bat"`
   * Spaces in the path and/or arguments: wrap the script path in single quotes (`'`), then add a space and the arguments.
     * Correct example: `"'C:/My Script.ps1' -arg1 -v"`
 * **Synchronous execution:** the engine pauses (`-Wait`) and waits for each script to finish before moving to the next item.
+* **Shortcuts (`.lnk` / `.url`):** These are started with **`System.Diagnostics.ProcessStartInfo`** (`UseShellExecute = true`) and **`WorkingDirectory`** set to the shortcut’s folder. **`Start-Process -FilePath`** treats **`()`** as wildcards, which breaks names like `Make Monitors 60hz (Performance).lnk` with “Windows cannot find the path specified.” ShellExecute is used so the shortcut is not tied to the orchestrator console the way `-NoNewWindow` batch launches are.
 * **Timers:** you may include timer tokens like `t 3000` in `scripts_start` (it delays like `executables`). If included in `scripts_stop`, timer tokens are ignored/skipped.
 
 ### 5. Protected Processes (No Extensions)
@@ -159,6 +167,26 @@ Each workspace may define an optional `type` value.
 * When **current** state is **Mixed**, [Space] only flips the desired target between `Ready` and `Stopped` (push toward full up or full down). The first press from `Mixed` / `Mixed` sets desired to `Ready`.
 * **[Backspace]** clears a pending desired change: desired is reset to **current** for stateful workspaces, or to `Idle` for oneshot (clears a queued **Run**). Those rows then contribute no delta on **Commit**.
 
+### 11b. Workspace description (`description`)
+Each workspace object may include an optional `description` string.
+
+* **Type:** string (free text).
+* **Purpose:** hints or context about the profile. The Dashboard shows this line under the main table when that workspace row is highlighted (cyan, prefixed with the information symbol ⓘ).
+* **Orchestration:** metadata only; Start, Stop, and state logic ignore this key.
+
+### 11c. Post-commit Dashboard messages (`post_change_message`, `post_start_message`, `post_stop_message`)
+Each workspace object may include optional strings that the **Dashboard** shows only **after** a successful **Commit** (Enter), when that workspace row actually triggered an orchestration action—the same cases as the commit engine (stateful transitions to `Ready` / `Stopped`, excluding pending `Mixed` targets that do not call the orchestrator; oneshot when **Run** is committed).
+
+The Orchestrator and workspace state logic **ignore** these keys; they are post-execution UI hooks only.
+
+| Key | Type | When shown (after commit) |
+|-----|------|---------------------------|
+| `post_change_message` | String | The workspace had an orchestration-eligible commit for that row (state altered in the commit sense). |
+| `post_start_message` | String | The committed action for that row was **Start** (stateful desired `Ready`, or oneshot `Run`). |
+| `post_stop_message` | String | The committed action for that row was **Stop** (stateful desired `Stopped`). |
+
+If any of these produce at least one line for the commit, the Dashboard prints a **REQUIRED ACTIONS** block and waits for a keypress before exiting instead of using the short auto-exit delay.
+
 ### 12. Workspace Tags (`tags`)
 Each workspace may define an optional `tags` array for Dashboard categorization tabs.
 
@@ -176,16 +204,22 @@ These keys let a workspace enforce host-level desired state.
 * `power_plan`: exact friendly name of the power plan that must be active.
   * Example: `"power_plan": "High performance"`
 * `registry_toggles`: array of objects in this format:
-  * `{"path":"HKLM:\\...","name":"KeyName","value":1,"type":"DWord"}`
+  * `path` (string): registry path (for example `HKLM:\\...`).
+  * `name` (string): value name.
+  * `value_start` (required): value applied when the workspace is **Started**.
+  * `value_stop` (optional): value applied when the workspace is **Stopped** during Phase 4 teardown. If `value_stop` is omitted (or JSON `null`), the Orchestrator does **not** change that registry value on Stop (intentional default for safety).
+  * `type` (string): property type passed to `New-ItemProperty` (for example `DWord`).
+  * Example: `{"path":"HKLM:\\...","name":"KeyName","value_start":1,"value_stop":0,"type":"DWord"}`
 
 Stop behavior note:
-* `power_plan` and `registry_toggles` are not automatically reverted on Stop.
-* Use a dedicated Recovery workspace if you need reversible profile behavior.
+* `power_plan` is not automatically reverted on Stop; use a dedicated Recovery workspace if you need a different plan after stopping.
+* Registry toggles are reverted **only** when `value_stop` is set; otherwise the key is left unchanged on Stop.
 
 ### 14. Metadata Keys (`comment` and `description`)
 To support human-readable notes inside strict JSON, metadata keys are allowed.
 
 * `comment`: free-text note used as inline JSON comment replacement.
-* `description`: free-text workspace/config description (reserved for richer terminal UI usage in the future).
-* These keys are allowed at top-level and inside workspace/config objects.
-* For current runtime behavior, both keys are metadata-only and do not change Start/Stop/state logic.
+* **Top-level `description`:** optional file-level note on the root object (for example, what this `workspaces.json` is for). It is not a workspace profile and is ignored as a profile name by the Dashboard list.
+* **Per-workspace `description`:** optional string on each workspace object; see **§11b**. The Dashboard displays it when that profile is highlighted.
+* `comment` may appear at top-level and inside workspace objects.
+* For runtime behavior, these keys are metadata-only and do not change Start/Stop/state logic (except Dashboard UI for per-workspace `description` as noted above).
