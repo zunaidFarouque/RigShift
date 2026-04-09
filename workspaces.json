@@ -6,6 +6,7 @@
     "shortcut_prefix_stop": "!Stop-"
   },
   "GPU_Scheduling_HAGS": {
+    "create_shortcut_for": "none",
     "tags": ["Live_Stage"],
     "description": "Disables GPU scheduling to eliminate video-induced DPC latency.",
     "post_start_message": "[CRITICAL] HAGS is disabled. RESTART your PC now and set BIOS MUX to dGPU (PEG).",
@@ -26,10 +27,10 @@
     "power_plan_start": "Max Performance",
     "power_plan_stop": "Balanced",
     "scripts_start": [
-      "'./CustomScripts/Make Monitors 60hz (Performance).lnk'"
+      "'./CustomScripts/Monitors 60hz.lnk'"
     ],
     "scripts_stop": [
-      "'./CustomScripts/Make Monitors 90hz (Smooth).lnk'"
+      "'./CustomScripts/Monitors 90hz.lnk'"
     ]
   },
   "Windows_Update_and_Search_Indexer": {
@@ -37,10 +38,10 @@
     "description": "Halts Windows Update and Search Indexer to prevent CPU/Disk spikes.",
     "services_disable": ["wuauserv", "WSearch"],
     "scripts_start": [
-      "'./CustomScripts/Windows Update Blocker - Disable Updates.lnk'"
+      "'./CustomScripts/WUB-Disable Updates.lnk'"
     ],
     "scripts_stop": [
-      "'./CustomScripts/Windows Update Blocker - Enable Updates.lnk'"
+      "'./CustomScripts/WUB-Enable Updates.lnk'"
     ]
   },
   "Network_WiFi": {

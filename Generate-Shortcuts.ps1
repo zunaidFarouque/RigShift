@@ -50,17 +50,41 @@ foreach ($workspaceName in $db.PSObject.Properties.Name) {
         continue
     }
 
-    $startShortcutPath = Join-Path -Path $shortcutDir -ChildPath "$prefixStart$workspaceName.lnk"
-    $startShortcut = $wshShell.CreateShortcut($startShortcutPath)
-    $startShortcut.TargetPath = "pwsh.exe"
-    $startShortcut.Arguments = "-WindowStyle $consoleStyle -ExecutionPolicy Bypass -File `"$orchestratorPath`" -WorkspaceName `"$workspaceName`" -Action `"Start`""
-    $startShortcut.Save()
+    $shortcutMode = "both"
+    $wsObj = $db.PSObject.Properties[$workspaceName].Value
+    if ($wsObj -is [pscustomobject]) {
+        $createForProperty = $wsObj.PSObject.Properties["create_shortcut_for"]
+        if ($null -ne $createForProperty) {
+            $raw = [string]$createForProperty.Value
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $normalized = $raw.Trim().ToLowerInvariant()
+                switch ($normalized) {
+                    "none" { $shortcutMode = "none" }
+                    "start" { $shortcutMode = "start" }
+                    "stop" { $shortcutMode = "stop" }
+                    default {
+                        throw "Invalid create_shortcut_for for workspace '$workspaceName': '$raw'. Allowed values: none, start, stop."
+                    }
+                }
+            }
+        }
+    }
 
-    $stopShortcutPath = Join-Path -Path $shortcutDir -ChildPath "$prefixStop$workspaceName.lnk"
-    $stopShortcut = $wshShell.CreateShortcut($stopShortcutPath)
-    $stopShortcut.TargetPath = "pwsh.exe"
-    $stopShortcut.Arguments = "-WindowStyle $consoleStyle -ExecutionPolicy Bypass -File `"$orchestratorPath`" -WorkspaceName `"$workspaceName`" -Action `"Stop`""
-    $stopShortcut.Save()
+    if ($shortcutMode -eq "both" -or $shortcutMode -eq "start") {
+        $startShortcutPath = Join-Path -Path $shortcutDir -ChildPath "$prefixStart$workspaceName.lnk"
+        $startShortcut = $wshShell.CreateShortcut($startShortcutPath)
+        $startShortcut.TargetPath = "pwsh.exe"
+        $startShortcut.Arguments = "-WindowStyle $consoleStyle -ExecutionPolicy Bypass -File `"$orchestratorPath`" -WorkspaceName `"$workspaceName`" -Action `"Start`""
+        $startShortcut.Save()
+    }
+
+    if ($shortcutMode -eq "both" -or $shortcutMode -eq "stop") {
+        $stopShortcutPath = Join-Path -Path $shortcutDir -ChildPath "$prefixStop$workspaceName.lnk"
+        $stopShortcut = $wshShell.CreateShortcut($stopShortcutPath)
+        $stopShortcut.TargetPath = "pwsh.exe"
+        $stopShortcut.Arguments = "-WindowStyle $consoleStyle -ExecutionPolicy Bypass -File `"$orchestratorPath`" -WorkspaceName `"$workspaceName`" -Action `"Stop`""
+        $stopShortcut.Save()
+    }
 }
 
 Write-Host "[ SUCCESS ] Workspace shortcuts generated and indexed in the Start Menu." -ForegroundColor Green

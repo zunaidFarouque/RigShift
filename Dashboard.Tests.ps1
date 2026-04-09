@@ -309,8 +309,8 @@ Describe "Dashboard Editor Helpers" {
         Mock -CommandName powercfg -MockWith { "" }
         Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
 
-        $hidden = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false)
-        $shown = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$true)
+        $hidden = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
+        $shown = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$true -ShowStopHooks:$false)
 
         @($hidden | Where-Object { $_.Name -match "IgnoredService" }).Count | Should -Be 0
         @($shown | Where-Object { $_.Name -eq "[Ignored] IgnoredService" -and $_.IsRunning -eq $false }).Count | Should -Be 1
@@ -330,7 +330,7 @@ Describe "Get-WorkspaceDetails executables" {
 
         Mock -CommandName Get-Process -MockWith { $null }
 
-        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false)
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
         $exeRows = @($details | Where-Object { $_.Type -eq "[Exe]" })
         $exeRows.Count | Should -Be 1
         $exeRows[0].Name | Should -Be "NotRunning.exe"
@@ -344,11 +344,134 @@ Describe "Get-WorkspaceDetails executables" {
 
         Mock -CommandName Get-Process -MockWith { $null }
 
-        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false)
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
         $exeRows = @($details | Where-Object { $_.Type -eq "[Exe]" })
         $exeRows.Count | Should -Be 1
         $exeRows[0].Name | Should -Be "My Tool.exe"
         $exeRows[0].IsRunning | Should -Be $false
+    }
+}
+
+Describe "Get-WorkspaceDetails scripts_start and power_plan_start" {
+    BeforeAll {
+        $here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        . (Join-Path -Path $here -ChildPath "Dashboard.ps1")
+    }
+
+    It "lists scripts_start as stateless [Scr] rows with basename only" {
+        $workspace = [pscustomobject]@{
+            scripts_start = @("'./CustomScripts/Monitors 60hz.lnk'")
+        }
+
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
+        $scrRows = @($details | Where-Object { $_.Type -eq "[Scr]" })
+        $scrRows.Count | Should -Be 1
+        $scrRows[0].Name | Should -Be "Monitors 60hz"
+        $scrRows[0].IsRunning | Should -Be $null
+    }
+
+    It "skips commented and timer tokens in scripts_start" {
+        $workspace = [pscustomobject]@{
+            scripts_start = @("#'C:/Ignored.bat'", "t 3000", "'C:/Real.ps1'")
+        }
+
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
+        $scrRows = @($details | Where-Object { $_.Type -eq "[Scr]" })
+        $scrRows.Count | Should -Be 1
+        $scrRows[0].Name | Should -Be "Real"
+    }
+
+    It "includes power_plan_start with monitored IsRunning from powercfg" {
+        $workspace = [pscustomobject]@{
+            power_plan_start = "Max Performance"
+        }
+
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "Power Scheme GUID: x  (Max Performance)" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
+        $pwrRows = @($details | Where-Object { $_.Type -eq "[Pwr]" })
+        $pwrRows.Count | Should -Be 1
+        $pwrRows[0].Name | Should -Be "Max Performance"
+        $pwrRows[0].IsRunning | Should -Be $true
+    }
+
+    It "lists services_disable as [Off] with IsRunning true when service is not Running" {
+        $workspace = [pscustomobject]@{
+            services_disable = @("WSearch")
+        }
+
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Stopped" } }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
+        $offRows = @($details | Where-Object { $_.Type -eq "[Off]" })
+        $offRows.Count | Should -Be 1
+        $offRows[0].Name | Should -Be "WSearch"
+        $offRows[0].IsRunning | Should -Be $true
+    }
+
+    It "lists scripts_stop as [ScrStop] with stateless IsRunning" {
+        $workspace = [pscustomobject]@{
+            scripts_stop = @("'C:/Tools/Cleanup.bat'")
+        }
+
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$true)
+        $rows = @($details | Where-Object { $_.Type -eq "[ScrStop]" })
+        $rows.Count | Should -Be 1
+        $rows[0].Name | Should -Be "Cleanup"
+        $rows[0].IsRunning | Should -Be $null
+    }
+
+    It "lists power_plan_stop as [PwrStop] stateless" {
+        $workspace = [pscustomobject]@{
+            power_plan_stop = "Balanced"
+        }
+
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$true)
+        $rows = @($details | Where-Object { $_.Type -eq "[PwrStop]" })
+        $rows.Count | Should -Be 1
+        $rows[0].Name | Should -Be "Balanced"
+        $rows[0].IsRunning | Should -Be $null
+    }
+
+    It "omits [ScrStop] and [PwrStop] when ShowStopHooks is false" {
+        $workspace = [pscustomobject]@{
+            scripts_stop     = @("'C:/Tools/Cleanup.bat'")
+            power_plan_stop  = "Balanced"
+        }
+
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "" }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+
+        $details = @(Get-WorkspaceDetails -WorkspaceData $workspace -PnpCache @() -ShowIgnored:$false -ShowStopHooks:$false)
+        @($details | Where-Object { $_.Type -eq "[ScrStop]" -or $_.Type -eq "[PwrStop]" }).Count | Should -Be 0
     }
 }
 
@@ -364,7 +487,7 @@ Describe "Get-UIStatesFromWorkspaces description" {
         $workspaces = [pscustomobject]@{
             ProfileA = [pscustomobject]@{ description = "Primary DAW profile for recording." }
         }
-        $states = @(Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $script:PnpCacheStub -ShowIgnored:$false)
+        $states = @(Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $script:PnpCacheStub -ShowIgnored:$false -ShowStopHooks:$false)
         $states.Count | Should -Be 1
         $states[0].Name | Should -Be "ProfileA"
         $states[0].Description | Should -Be "Primary DAW profile for recording."
@@ -374,7 +497,7 @@ Describe "Get-UIStatesFromWorkspaces description" {
         $workspaces = [pscustomobject]@{
             ProfileB = [pscustomobject]@{ type = "stateful" }
         }
-        $states = @(Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $script:PnpCacheStub -ShowIgnored:$false)
+        $states = @(Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $script:PnpCacheStub -ShowIgnored:$false -ShowStopHooks:$false)
         $states[0].Description | Should -Be ""
     }
 
@@ -382,7 +505,7 @@ Describe "Get-UIStatesFromWorkspaces description" {
         $workspaces = [pscustomobject]@{
             ProfileC = [pscustomobject]@{ description = "   " }
         }
-        $states = @(Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $script:PnpCacheStub -ShowIgnored:$false)
+        $states = @(Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $script:PnpCacheStub -ShowIgnored:$false -ShowStopHooks:$false)
         $states[0].Description | Should -Be "   "
     }
 }

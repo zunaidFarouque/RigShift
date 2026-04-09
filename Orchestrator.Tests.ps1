@@ -514,13 +514,38 @@ Describe "Phase 3 - The Start Pipeline" {
         Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
     }
 
+    It "stops and disables services_disable targets on Start" {
+        @'
+{
+  "Audio_Production": {
+    "services_disable": ["WSearch"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        ($global:gsudoCalls | Where-Object { $_ -match "net\.exe stop WSearch" }).Count | Should -Be 1
+        ($global:gsudoCalls | Where-Object { $_ -match "sc\.exe config WSearch start= disabled" }).Count | Should -Be 1
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
     It "applies DSC start commands for PnP, power plan, and registry toggles" {
         @'
 {
   "Audio_Production": {
     "pnp_devices_enable": ["USB Audio"],
     "pnp_devices_disable": ["Bluetooth"],
-    "power_plan": "High performance",
+    "power_plan_start": "High performance",
     "registry_toggles": [
       { "path": "HKLM:\\SOFTWARE\\Contoso", "name": "LowLatency", "value_start": 1, "type": "DWord" }
     ]
@@ -827,13 +852,40 @@ Describe "Phase 4 - The Stop Pipeline" {
         Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
     }
 
+    It "on Stop restores services_disable with demand start and net start" {
+        @'
+{
+  "Audio_Production": {
+    "services_disable": ["WSearch"]
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Write-Host -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Stopped" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Stop" | Out-Null } | Should -Not -Throw
+
+        ($global:gsudoCalls | Where-Object { $_ -match "sc\.exe config WSearch start= demand" }).Count | Should -Be 1
+        ($global:gsudoCalls | Where-Object { $_ -match "net\.exe start WSearch" }).Count | Should -Be 1
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
     It "inverts PnP device targets on Stop, warns for non-reverted power plan only, and reverts registry when value_stop is set" {
         @'
 {
   "Audio_Production": {
     "pnp_devices_enable": ["USB Audio"],
     "pnp_devices_disable": ["Bluetooth"],
-    "power_plan": "High performance",
+    "power_plan_start": "High performance",
     "registry_toggles": [
       { "path": "HKLM:\\SOFTWARE\\Contoso", "name": "LowLatency", "value_start": 1, "value_stop": 0, "type": "DWord" }
     ]
@@ -872,6 +924,45 @@ Describe "Phase 4 - The Stop Pipeline" {
             $ForegroundColor -eq "Yellow"
         }
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "on Stop applies power_plan_stop via powercfg /setactive when power_plan_stop is set" {
+        @'
+{
+  "Audio_Production": {
+    "power_plan_start": "High performance",
+    "power_plan_stop": "Balanced"
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:powercfgCalls = @()
+        Mock -CommandName powercfg -MockWith {
+            $global:powercfgCalls += ,($args -join " ")
+            if ($args[0] -eq "/l") {
+                @(
+                    "Existing Power Schemes (* Active)",
+                    "Power Scheme GUID: 11111111-2222-3333-4444-555555555555  (High performance)",
+                    "Power Scheme GUID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee  (Balanced)"
+                )
+            } else {
+                "ok"
+            }
+        }
+        Mock -CommandName Write-Host -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Stop" | Out-Null } | Should -Not -Throw
+
+        $global:powercfgCalls | Should -Contain "/l"
+        $global:powercfgCalls | Should -Contain "/setactive aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        Assert-MockCalled -CommandName Write-Host -Times 0 -ParameterFilter {
+            $Object -eq "Note: Power plans are not automatically reverted on Stop. Use a Recovery workspace."
+        }
+        Remove-Variable -Name powercfgCalls -Scope Global -ErrorAction SilentlyContinue
     }
 
     It "on Stop calls gsudo New-ItemProperty with value_stop when value_stop is provided" {

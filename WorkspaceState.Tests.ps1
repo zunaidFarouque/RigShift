@@ -130,7 +130,7 @@ Describe "Workspace State Analyzer" {
         $workspace = [pscustomobject]@{
             pnp_devices_enable  = @("USB Audio")
             pnp_devices_disable = @("Bluetooth")
-            power_plan          = "High performance"
+            power_plan_start    = "High performance"
             registry_toggles    = @(
                 [pscustomobject]@{
                     path         = "HKLM:\SOFTWARE\Contoso"
@@ -153,6 +153,28 @@ Describe "Workspace State Analyzer" {
 
         $state = Get-WorkspaceState -Workspace $workspace
         $state | Should -Be "Ready"
+    }
+
+    It "returns Ready when services_disable targets are not Running" {
+        $workspace = [pscustomobject]@{
+            services_disable = @("wuauserv", "WSearch")
+        }
+
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Stopped" } }
+
+        $state = Get-WorkspaceState -Workspace $workspace
+        $state | Should -Be "Ready"
+    }
+
+    It "returns Stopped when a required services_disable target is still Running" {
+        $workspace = [pscustomobject]@{
+            services_disable = @("wuauserv")
+        }
+
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Running" } }
+
+        $state = Get-WorkspaceState -Workspace $workspace
+        $state | Should -Be "Stopped"
     }
 
     It "treats pnp_devices_disable status OK as non-compliant" {

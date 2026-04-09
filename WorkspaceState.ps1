@@ -45,9 +45,11 @@ function Get-WorkspaceState {
         return "Idle"
     }
 
-    # Count only actionable/runtime state: services, executables, PnP, power plan, registry — not scripts_* or protected_processes.
+    # Count only actionable/runtime state: services, services_disable, executables, PnP, power plan, registry — not scripts_* or protected_processes.
     $totalServices = 0
     $runningServices = 0
+    $totalSvcDisable = 0
+    $runningSvcDisable = 0
     $totalExecutables = 0
     $runningExecutables = 0
 
@@ -76,6 +78,43 @@ function Get-WorkspaceState {
                 $runningServices++
             } elseif (-not $isOptional) {
                 $totalServices++
+            }
+        }
+    }
+
+    $servicesDisableProperty = $Workspace.PSObject.Properties["services_disable"]
+    if ($null -ne $servicesDisableProperty) {
+        foreach ($serviceItem in @($servicesDisableProperty.Value)) {
+            $serviceName = [string]$serviceItem
+            if ([string]::IsNullOrWhiteSpace($serviceName)) {
+                continue
+            }
+            if ($serviceName -match '^#') {
+                continue
+            }
+            if ($serviceName -match '^t\s+(\d+)$') {
+                continue
+            }
+
+            $isOptional = $serviceName.StartsWith("?")
+            if ($isOptional) {
+                $serviceName = $serviceName.Substring(1)
+            }
+
+            $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+            if ($null -eq $service) {
+                if ($isOptional) {
+                    continue
+                }
+                $totalSvcDisable++
+                continue
+            }
+
+            if ($null -ne $service -and $service.Status -ne "Running") {
+                $totalSvcDisable++
+                $runningSvcDisable++
+            } elseif (-not $isOptional) {
+                $totalSvcDisable++
             }
         }
     }
@@ -120,8 +159,8 @@ function Get-WorkspaceState {
         }
     }
 
-    $totalItems = $totalServices + $totalExecutables
-    $runningItems = $runningServices + $runningExecutables
+    $totalItems = $totalServices + $totalSvcDisable + $totalExecutables
+    $runningItems = $runningServices + $runningSvcDisable + $runningExecutables
 
     $pnpEnableProperty = $Workspace.PSObject.Properties["pnp_devices_enable"]
     if ($null -ne $pnpEnableProperty) {
@@ -161,7 +200,7 @@ function Get-WorkspaceState {
         }
     }
 
-    $powerPlanProperty = $Workspace.PSObject.Properties["power_plan"]
+    $powerPlanProperty = $Workspace.PSObject.Properties["power_plan_start"]
     if ($null -ne $powerPlanProperty -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanProperty.Value)) {
         $planName = [string]$powerPlanProperty.Value
         $totalItems++

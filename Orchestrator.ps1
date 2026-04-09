@@ -239,6 +239,44 @@ if ($Action -eq "Start") {
         }
     }
 
+    $servicesDisableProperty = $workspace.PSObject.Properties["services_disable"]
+    if ($null -ne $servicesDisableProperty) {
+        foreach ($serviceItem in $servicesDisableProperty.Value) {
+            if ([string]$serviceItem -match '^#') {
+                continue
+            }
+            if ($serviceItem -is [string] -and $serviceItem -match "^t\s+(\d+)$") {
+                $sleepDuration = [int]$matches[1]
+                Start-Sleep -Milliseconds $sleepDuration
+                continue
+            }
+
+            $serviceName = [string]$serviceItem
+            $isOptionalSvcDisable = $serviceName.StartsWith("?")
+            if ($isOptionalSvcDisable) {
+                $serviceName = $serviceName.Substring(1)
+            }
+
+            $svcCheck = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+            if ($null -eq $svcCheck) {
+                if ($isOptionalSvcDisable) {
+                    Write-Host "Skipping optional services_disable entry: $serviceName" -ForegroundColor DarkYellow
+                    continue
+                }
+                Write-Host "Warning: Service '$serviceName' does not exist on this system." -ForegroundColor Yellow
+                $ans = Read-Host "Ignore missing service and continue? (Y/N)"
+                if ($ans -match "^[Nn]$") {
+                    throw "Abort: Required services_disable target $serviceName is missing."
+                }
+                continue
+            }
+
+            Write-Host "Stopping and disabling service: $serviceName..." -ForegroundColor Cyan
+            gsudo net.exe stop $serviceName /y 2>&1 | Out-Null
+            gsudo sc.exe config $serviceName start= disabled 2>&1 | Out-Null
+        }
+    }
+
     # scripts_start (runs synchronously, after services, before executables)
     $scriptsStartProperty = $workspace.PSObject.Properties["scripts_start"]
     if ($null -ne $scriptsStartProperty) {
@@ -330,7 +368,7 @@ if ($Action -eq "Start") {
         }
     }
 
-    $powerPlanProperty = $workspace.PSObject.Properties["power_plan"]
+    $powerPlanProperty = $workspace.PSObject.Properties["power_plan_start"]
     if ($null -ne $powerPlanProperty -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanProperty.Value)) {
         $planName = [string]$powerPlanProperty.Value
         $plansOutput = powercfg /l
@@ -483,6 +521,49 @@ if ($Action -eq "Stop") {
         }
     }
 
+    $servicesDisableProperty = $workspace.PSObject.Properties["services_disable"]
+    if ($null -ne $servicesDisableProperty) {
+        foreach ($serviceItem in @($servicesDisableProperty.Value)) {
+            if ([string]$serviceItem -match '^#') {
+                continue
+            }
+            if ($serviceItem -is [string] -and $serviceItem -match "^t\s+(\d+)$") {
+                continue
+            }
+
+            $serviceName = [string]$serviceItem
+            if ($serviceName.StartsWith("?")) {
+                $serviceName = $serviceName.Substring(1)
+            }
+
+            $svcCheck = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+            if ($null -eq $svcCheck) {
+                continue
+            }
+
+            Write-Host "Restoring service: $serviceName..." -ForegroundColor Cyan
+            gsudo sc.exe config $serviceName start= demand 2>&1 | Out-Null
+            gsudo net.exe start $serviceName 2>&1 | Out-Null
+        }
+    }
+
+    $powerPlanStopProp = $workspace.PSObject.Properties["power_plan_stop"]
+    if ($null -ne $powerPlanStopProp -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanStopProp.Value)) {
+        $stopPlanName = [string]$powerPlanStopProp.Value
+        $plansOutputStop = powercfg /l
+        foreach ($line in @($plansOutputStop)) {
+            if ($line -match [regex]::Escape($stopPlanName)) {
+                $guidMatchStop = [regex]::Match([string]$line, "([0-9a-fA-F-]{36})")
+                if (-not $guidMatchStop.Success) {
+                    continue
+                }
+                $planGuidStop = $guidMatchStop.Groups[1].Value
+                powercfg /setactive $planGuidStop | Out-Null
+                break
+            }
+        }
+    }
+
     $executablesProperty = $workspace.PSObject.Properties["executables"]
     if ($null -ne $executablesProperty) {
         $executables = @($executablesProperty.Value)
@@ -535,8 +616,10 @@ if ($Action -eq "Stop") {
         }
     }
 
-    $powerPlanProperty = $workspace.PSObject.Properties["power_plan"]
-    if ($null -ne $powerPlanProperty -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanProperty.Value)) {
+    $powerPlanStartProp = $workspace.PSObject.Properties["power_plan_start"]
+    $stopPlanConfigured = ($null -ne $powerPlanStopProp -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanStopProp.Value))
+    $onlyStartNoStop = ($null -ne $powerPlanStartProp -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanStartProp.Value)) -and -not $stopPlanConfigured
+    if ($onlyStartNoStop) {
         Write-Host "Note: Power plans are not automatically reverted on Stop. Use a Recovery workspace." -ForegroundColor Yellow
     }
 

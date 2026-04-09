@@ -174,6 +174,7 @@ function Clear-DashboardDesiredState {
 function Get-ActionableArrayProperties {
     @(
         "services",
+        "services_disable",
         "executables",
         "scripts_start",
         "scripts_stop",
@@ -332,7 +333,9 @@ function Get-WorkspaceDetails {
         [psobject]$WorkspaceData,
         [array]$PnpCache = @(),
         [Parameter(Mandatory = $true)]
-        [bool]$ShowIgnored
+        [bool]$ShowIgnored,
+        [Parameter(Mandatory = $true)]
+        [bool]$ShowStopHooks
     )
 
     $details = @()
@@ -352,6 +355,28 @@ function Get-WorkspaceDetails {
             if ($serviceName.StartsWith("?")) { $serviceName = $serviceName.Substring(1) }
             $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
             $details += [pscustomobject]@{ Type = "[Svc]"; Name = $serviceName; IsRunning = ($null -ne $service -and $service.Status -eq "Running") }
+        }
+    }
+
+    $servicesDisableProperty = $WorkspaceData.PSObject.Properties["services_disable"]
+    if ($null -ne $servicesDisableProperty) {
+        foreach ($s in @($servicesDisableProperty.Value)) {
+            $serviceName = [string]$s
+            if ([string]::IsNullOrWhiteSpace($serviceName) -or $serviceName -match '^t\s+(\d+)$') { continue }
+            if ($serviceName -match '^#') {
+                if ($ShowIgnored) {
+                    $label = if ($serviceName.Length -gt 1) { $serviceName.Substring(1) } else { $serviceName }
+                    $details += [pscustomobject]@{ Type = "[Off]"; Name = "[Ignored] $label"; IsRunning = $false }
+                }
+                continue
+            }
+            $isOptionalOff = $serviceName.StartsWith("?")
+            $displayName = if ($isOptionalOff) { $serviceName.Substring(1) } else { $serviceName }
+            $service = Get-Service -Name $displayName -ErrorAction SilentlyContinue
+            if ($null -eq $service -and $isOptionalOff) {
+                continue
+            }
+            $details += [pscustomobject]@{ Type = "[Off]"; Name = $displayName; IsRunning = ($null -ne $service -and $service.Status -ne "Running") }
         }
     }
 
@@ -380,6 +405,54 @@ function Get-WorkspaceDetails {
             if ([string]::IsNullOrWhiteSpace($exeName)) { continue }
             $proc = Get-Process -Name $exeName -ErrorAction SilentlyContinue
             $details += [pscustomobject]@{ Type = "[Exe]"; Name = "$exeName.exe"; IsRunning = ($null -ne $proc) }
+        }
+    }
+
+    $scriptsStartProperty = $WorkspaceData.PSObject.Properties["scripts_start"]
+    if ($null -ne $scriptsStartProperty) {
+        foreach ($scriptToken in @($scriptsStartProperty.Value)) {
+            $scriptText = [string]$scriptToken
+            if ([string]::IsNullOrWhiteSpace($scriptText) -or $scriptText -match '^t\s+(\d+)$') { continue }
+            if ($scriptText -match '^#') { continue }
+
+            $resolvedScriptText = Resolve-QuotedRelativeExecutionToken -ExecutionToken $scriptText
+            if ($resolvedScriptText -match "^'(.*?)'\s*(.*)$") {
+                $filePath = $matches[1]
+            } else {
+                $filePath = ($resolvedScriptText.Split([char[]]@(' '), [System.StringSplitOptions]::RemoveEmptyEntries) | Select-Object -First 1)
+            }
+            if ([string]::IsNullOrWhiteSpace($filePath)) { continue }
+            if ($filePath.StartsWith("?")) { $filePath = $filePath.Substring(1) }
+            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
+            $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($filePath)
+            if ([string]::IsNullOrWhiteSpace($scriptName)) { continue }
+
+            $details += [pscustomobject]@{ Type = "[Scr]"; Name = $scriptName; IsRunning = $null }
+        }
+    }
+
+    if ($ShowStopHooks) {
+        $scriptsStopProperty = $WorkspaceData.PSObject.Properties["scripts_stop"]
+        if ($null -ne $scriptsStopProperty) {
+            foreach ($scriptToken in @($scriptsStopProperty.Value)) {
+                $scriptText = [string]$scriptToken
+                if ([string]::IsNullOrWhiteSpace($scriptText) -or $scriptText -match '^t\s+(\d+)$') { continue }
+                if ($scriptText -match '^#') { continue }
+
+                $resolvedScriptText = Resolve-QuotedRelativeExecutionToken -ExecutionToken $scriptText
+                if ($resolvedScriptText -match "^'(.*?)'\s*(.*)$") {
+                    $filePath = $matches[1]
+                } else {
+                    $filePath = ($resolvedScriptText.Split([char[]]@(' '), [System.StringSplitOptions]::RemoveEmptyEntries) | Select-Object -First 1)
+                }
+                if ([string]::IsNullOrWhiteSpace($filePath)) { continue }
+                if ($filePath.StartsWith("?")) { $filePath = $filePath.Substring(1) }
+                $filePath = Resolve-RepoRelativeFilePath -Path $filePath
+                $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($filePath)
+                if ([string]::IsNullOrWhiteSpace($scriptName)) { continue }
+
+                $details += [pscustomobject]@{ Type = "[ScrStop]"; Name = $scriptName; IsRunning = $null }
+            }
         }
     }
 
@@ -419,13 +492,24 @@ function Get-WorkspaceDetails {
         }
     }
 
-    $powerPlanProperty = $WorkspaceData.PSObject.Properties["power_plan"]
+    $powerPlanProperty = $WorkspaceData.PSObject.Properties["power_plan_start"]
     if ($null -ne $powerPlanProperty) {
         $planName = [string]$powerPlanProperty.Value
         if (-not [string]::IsNullOrWhiteSpace($planName)) {
             if ($planName.StartsWith("?")) { $planName = $planName.Substring(1) }
             $active = powercfg /getactivescheme
             $details += [pscustomobject]@{ Type = "[Pwr]"; Name = $planName; IsRunning = ($active -match [regex]::Escape($planName)) }
+        }
+    }
+
+    if ($ShowStopHooks) {
+        $powerPlanStopProperty = $WorkspaceData.PSObject.Properties["power_plan_stop"]
+        if ($null -ne $powerPlanStopProperty) {
+            $stopPlanName = [string]$powerPlanStopProperty.Value
+            if (-not [string]::IsNullOrWhiteSpace($stopPlanName)) {
+                if ($stopPlanName.StartsWith("?")) { $stopPlanName = $stopPlanName.Substring(1) }
+                $details += [pscustomobject]@{ Type = "[PwrStop]"; Name = $stopPlanName; IsRunning = $null }
+            }
         }
     }
 
@@ -458,7 +542,9 @@ function Get-UIStatesFromWorkspaces {
         [Parameter(Mandatory = $true)]
         [array]$PnpCache,
         [Parameter(Mandatory = $true)]
-        [bool]$ShowIgnored
+        [bool]$ShowIgnored,
+        [Parameter(Mandatory = $true)]
+        [bool]$ShowStopHooks
     )
 
     $metadataKeys = @("_config", "comment", "description")
@@ -479,7 +565,7 @@ function Get-UIStatesFromWorkspaces {
         }
         $desc = if ($null -ne $workspaceData.PSObject.Properties["description"]) { $workspaceData.description } else { "" }
         $current = if ($type -eq "oneshot") { "Idle" } else { Get-WorkspaceState -Workspace $workspaceData -PnpCache $PnpCache }
-        $details = Get-WorkspaceDetails -WorkspaceData $workspaceData -PnpCache $PnpCache -ShowIgnored:$ShowIgnored
+        $details = Get-WorkspaceDetails -WorkspaceData $workspaceData -PnpCache $PnpCache -ShowIgnored:$ShowIgnored -ShowStopHooks:$ShowStopHooks
         $states += [pscustomobject]@{
             Name         = $name
             CurrentState = $current
@@ -503,7 +589,8 @@ function Start-Dashboard {
     Write-Host "Scanning hardware devices..." -ForegroundColor DarkGray
     $globalPnpCache = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue
     $showIgnored = $false
-    $UIStates = Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $globalPnpCache -ShowIgnored:$showIgnored
+    $showStopHooks = $false
+    $UIStates = Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $globalPnpCache -ShowIgnored:$showIgnored -ShowStopHooks:$showStopHooks
 
     if ($UIStates.Count -eq 0) {
         Write-Host "No workspaces found in workspaces.json."
@@ -604,11 +691,13 @@ function Start-Dashboard {
 
                     if ($DetailedMode -eq $true) {
                         foreach ($detail in $state.Details) {
-                            $icon = if ($detail.IsRunning) { [char]0x25B6 } else { [char]0x25CB }
+                            $icon = if ($null -eq $detail.IsRunning) { " -" } elseif ($detail.IsRunning) { " " + [char]0x25B6 } else { " o" }
                             $detailPrefix = "      "
                             $detailType = if ($null -ne $detail.PSObject.Properties["Type"] -and -not [string]::IsNullOrWhiteSpace([string]$detail.Type)) { [string]$detail.Type } else { "[Obj]" }
                             $detailText = "$detailType $($detail.Name)".PadRight($nameColumnWidth - 12)
                             if ([string]$detail.Name -match '^\[Ignored\]') {
+                                Write-Host "$detailPrefix$icon $detailText" -ForegroundColor DarkGray
+                            } elseif ($null -eq $detail.IsRunning) {
                                 Write-Host "$detailPrefix$icon $detailText" -ForegroundColor DarkGray
                             } else {
                                 Write-Host "$detailPrefix$icon $detailText"
@@ -631,7 +720,7 @@ function Start-Dashboard {
                 }
                 Write-Host ""
                 Write-Host '[Up/Down] Nav | [Right] Edit | [Space] Toggle | [Bksp] Clear' -ForegroundColor Gray
-                Write-Host ('[F1] Details  | [F2] Ignored: ' + $showIgnored + ' | [Enter] Commit | [Esc] Cancel') -ForegroundColor Gray
+                Write-Host ('[F1] Details  | [F2] Stop hooks: ' + $showStopHooks + ' | [F3] Ignored: ' + $showIgnored + ' | [Enter] Commit | [Esc] Cancel') -ForegroundColor Gray
             } elseif ($MenuState -eq "Editor") {
                 Clear-Host
                 Write-Host "=== EDITING: $($activeWorkspace.Name) ==="
@@ -725,8 +814,12 @@ function Start-Dashboard {
                     $DetailedMode = -not $DetailedMode
                 }
                 "F2" {
+                    $showStopHooks = -not $showStopHooks
+                    $UIStates = Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $globalPnpCache -ShowIgnored:$showIgnored -ShowStopHooks:$showStopHooks
+                }
+                "F3" {
                     $showIgnored = -not $showIgnored
-                    $UIStates = Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $globalPnpCache -ShowIgnored:$showIgnored
+                    $UIStates = Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $globalPnpCache -ShowIgnored:$showIgnored -ShowStopHooks:$showStopHooks
                 }
                 "Escape" {
                     Clear-Host
@@ -758,7 +851,7 @@ function Start-Dashboard {
                 }
                 "LeftArrow" {
                     $MenuState = "Master"
-                    $UIStates = Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $globalPnpCache -ShowIgnored:$showIgnored
+                    $UIStates = Get-UIStatesFromWorkspaces -Workspaces $workspaces -PnpCache $globalPnpCache -ShowIgnored:$showIgnored -ShowStopHooks:$showStopHooks
                     $cursorIndex = 0
                 }
                 "Spacebar" {
