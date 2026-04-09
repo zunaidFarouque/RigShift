@@ -376,9 +376,6 @@ if ($resolvedProfileType -eq "App_Workload") {
     }
 
     $desiredState = $targetState
-    if ($Action -eq "Stop") {
-        $desiredState = if ($targetState -eq "ON") { "OFF" } else { "ON" }
-    }
 
     Invoke-HardwareDefinitionTransition -ComponentName $WorkspaceName -Definition $resolvedProfileData -DesiredState $desiredState
 }

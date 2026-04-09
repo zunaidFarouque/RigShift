@@ -263,6 +263,26 @@ Describe "Dashboard Tab 2/3 Queue Workflow" {
         $rows[0].DesiredState | Should -Be ""
     }
 
+    It "keeps Desired tied to blueprint target even when queued differs" {
+        $rows = @(
+            [pscustomobject]@{
+                Component     = "Search_Indexer"
+                PhysicalState = "ON"
+                DesiredState  = "OFF"
+                TargetState   = "ON"
+                IsCompliant   = $true
+            }
+        )
+        $queue = @{ "Search_Indexer" = "OFF" }
+
+        Normalize-DashboardComplianceRows -ComplianceRows $rows -PendingHardwareChanges $queue
+        $view = Get-DashboardTab3RowPresentation -Row $rows[0] -IsSelected $false -PendingHardwareChanges $queue
+
+        $rows[0].DesiredState | Should -Be "ON"
+        $view.Desired | Should -Be "ON"
+        $view.Status | Should -Be "[QUEUED: OFF]"
+    }
+
     It "uses compact symbols for compliant and ignored rows" {
         $matchRow = [pscustomobject]@{
             Component     = "Windows_Update"

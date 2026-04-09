@@ -228,4 +228,32 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         Assert-MockCalled -CommandName gsudo -Times 0 -Exactly
         Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
     }
+
+    It "hardware override stop action maps directly to OFF for service targets" {
+        @'
+{
+  "Hardware_Definitions": {
+    "Search_Indexer": {
+      "type": "service",
+      "name": "WSearch"
+    }
+  },
+  "System_Modes": {},
+  "App_Workloads": {}
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Process -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "Search_Indexer" -Action "Stop" -ProfileType "Hardware_Override" | Out-Null } | Should -Not -Throw
+
+        ($global:gsudoCalls | Where-Object { $_ -match 'Stop-Service -Name WSearch' }).Count | Should -Be 1
+        ($global:gsudoCalls | Where-Object { $_ -match 'Start-Service -Name WSearch' }).Count | Should -Be 0
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
 }

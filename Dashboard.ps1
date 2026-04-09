@@ -129,9 +129,7 @@ function Normalize-DashboardComplianceRows {
         $component = [string]$row.Component
         $targetState = [string]$row.TargetState
 
-        if ($PendingHardwareChanges.ContainsKey($component)) {
-            $row.DesiredState = [string]$PendingHardwareChanges[$component]
-        } elseif ($targetState -eq "ON" -or $targetState -eq "OFF") {
+        if ($targetState -eq "ON" -or $targetState -eq "OFF") {
             $row.DesiredState = $targetState
         } else {
             $row.DesiredState = ""
@@ -168,7 +166,6 @@ function Get-DashboardTab3RowPresentation {
 
     if ($null -ne $PendingHardwareChanges -and $PendingHardwareChanges.ContainsKey([string]$Row.Component)) {
         $queued = [string]$PendingHardwareChanges[[string]$Row.Component]
-        $desired = $queued
         $status = "[QUEUED: $queued]"
         $color = "Yellow"
     } elseif ($target -eq "ON" -or $target -eq "OFF") {
