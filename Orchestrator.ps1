@@ -252,6 +252,9 @@ function Invoke-HardwareDefinitionTransition {
             }
             gsudo New-ItemProperty -Path $path -Name $name -Value $valueToSet -PropertyType $propertyType -Force 2>&1 | Out-Null
         }
+        "process" {
+            # No native command path for process targets; rely on action overrides.
+        }
         "stateless" {
             # No native command path for stateless targets.
         }

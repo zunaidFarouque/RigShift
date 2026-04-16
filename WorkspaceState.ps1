@@ -72,6 +72,25 @@ function Get-ExecutableIsRunning {
     return ($null -ne $process)
 }
 
+function Get-ExecutionTokenDisplayName {
+    param([Parameter(Mandatory = $true)][string]$ExecutionToken)
+
+    if ([string]::IsNullOrWhiteSpace($ExecutionToken)) {
+        return ""
+    }
+    $resolvedToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken $ExecutionToken
+    $filePath = $resolvedToken
+    if ($resolvedToken -match "^'(.*?)'\s*(.*)$") {
+        $filePath = $matches[1]
+    }
+    $filePath = Resolve-RepoRelativeFilePath -Path $filePath
+    $leaf = Split-Path -Path $filePath -Leaf
+    if ([string]::IsNullOrWhiteSpace($leaf)) {
+        return $ExecutionToken
+    }
+    return $leaf
+}
+
 function Get-HardwarePhysicalState {
     param(
         [Parameter(Mandatory = $true)][string]$DefinitionKey,
@@ -87,6 +106,15 @@ function Get-HardwarePhysicalState {
             $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
             if ($null -eq $svc) { return $null }
             if ($svc.Status -eq "Running") { return "ON" }
+            return "OFF"
+        }
+        "process" {
+            $name = [string]$Definition.name
+            if ([string]::IsNullOrWhiteSpace($name)) { return $null }
+            $cleanName = $name -replace "\.exe$", ""
+            if ([string]::IsNullOrWhiteSpace($cleanName)) { return $null }
+            $proc = Get-Process -Name $cleanName -ErrorAction SilentlyContinue
+            if ($null -ne $proc) { return "ON" }
             return "OFF"
         }
         "pnp_device" {
@@ -162,14 +190,21 @@ function Get-WorkspaceState {
         $workload = $workloadProp.Value
         $totalChecks = 0
         $matchedChecks = 0
+        $serviceDetails = @()
+        $executableDetails = @()
 
         foreach ($serviceName in @($workload.services)) {
             $name = [string]$serviceName
             if ([string]::IsNullOrWhiteSpace($name) -or $name -match '^#' -or $name -match '^t\s+(\d+)$') { continue }
             $totalChecks++
             $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
-            if ($null -ne $svc -and $svc.Status -eq "Running") {
+            $isRunning = ($null -ne $svc -and $svc.Status -eq "Running")
+            if ($isRunning) {
                 $matchedChecks++
+            }
+            $serviceDetails += [pscustomobject]@{
+                Name      = $name
+                IsRunning = $isRunning
             }
         }
 
@@ -177,15 +212,27 @@ function Get-WorkspaceState {
             $token = [string]$executionToken
             if ([string]::IsNullOrWhiteSpace($token) -or $token -match '^#' -or $token -match '^t\s+(\d+)$') { continue }
             $totalChecks++
-            if (Get-ExecutableIsRunning -ExecutionToken $token) {
+            $isRunning = Get-ExecutableIsRunning -ExecutionToken $token
+            if ($isRunning) {
                 $matchedChecks++
+            }
+            $executableDetails += [pscustomobject]@{
+                Token       = $token
+                DisplayName = Get-ExecutionTokenDisplayName -ExecutionToken $token
+                IsRunning   = $isRunning
             }
         }
 
         $appWorkloadResults[$workloadName] = [pscustomobject]@{
-            Status       = Get-RunningStatusFromCounts -Matched $matchedChecks -Total $totalChecks
+            Status        = Get-RunningStatusFromCounts -Matched $matchedChecks -Total $totalChecks
             MatchedChecks = $matchedChecks
-            TotalChecks  = $totalChecks
+            TotalChecks   = $totalChecks
+            RuntimeDetails = [pscustomobject]@{
+                Services      = @($serviceDetails)
+                Executables   = @($executableDetails)
+                MatchedChecks = $matchedChecks
+                TotalChecks   = $totalChecks
+            }
         }
     }
 

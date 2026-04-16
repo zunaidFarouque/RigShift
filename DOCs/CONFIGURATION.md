@@ -190,10 +190,16 @@ Each workspace may define an optional `type` value.
 
 * **[Space]** toggles the *desired* outcome for commit. For stateful workspaces, desired maps to Orchestrator **Start** when `Ready` and **Stop** when `Stopped`.
 * When **current** state is **Mixed**, [Space] only flips the desired target between `Ready` and `Stopped` (push toward full up or full down). The first press from `Mixed` / `Mixed` sets desired to `Ready`.
-* **[Backspace]** clears a pending desired change: desired is reset to **current** for stateful workspaces, or to `Idle` for oneshot (clears a queued **Run**). Those rows then contribute no delta on **Commit**.
-* **[F1]** expands/collapses per-row details (DSC breakdown).
-* **[F2]** toggles visibility of stop-hook detail lines (`[ScrStop]`, `[PwrStop]`); they are off by default.
-* **[F3]** toggles visibility of ignored `#` lines in the details list.
+* **[\`]** cycles workload detail modes on the **App Workloads** tab only:
+  * `None` = compact list only.
+  * `MixedOnly` = show service/executable runtime details only for rows currently in `Mixed`.
+  * `All` = show runtime details for every workload row.
+* Detail rows use compact labels: `svc <name>` and `exe <name>`.
+* Runtime indicators are shown in the status column using concise symbols:
+  * `+` = running
+  * `-` = not running
+* Mixed rows append check counts directly in state text: `Mixed (matched/total)` (example: `Mixed (1/2)`).
+* **[Backspace]** clears queued hardware override rows on the Hardware Compliance tab.
 
 ### 11b. Workspace description (`description`)
 Each workspace object may include an optional `description` string.

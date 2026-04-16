@@ -45,11 +45,15 @@ function Write-StateText {
         return
     }
 
-    $color = switch ($State) {
-        "Inactive" { "Green" }
-        "Active" { "Red" }
-        "Mixed" { "Yellow" }
-        default { "Gray" }
+    $color = if ($State -like "Mixed*") {
+        "Yellow"
+    } else {
+        switch ($State) {
+            "Inactive" { "Green" }
+            "Active" { "Red" }
+            "Mixed" { "Yellow" }
+            default { "Gray" }
+        }
     }
     Write-Host -NoNewline $State -ForegroundColor $color
 }
@@ -272,16 +276,138 @@ function Get-DashboardFooterText {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [int]$CurrentTab
+        [int]$CurrentTab,
+        [string]$WorkloadDetailMode = "None"
     )
 
     if ($CurrentTab -eq 1) {
-        return "[1][2][3] Tab | [Up/Down] Nav | [Space] Toggle Workload | [Enter] Commit | [Esc] Cancel"
+        return "[1][2][3] Tab | [Up/Down] Nav | [Space] Toggle Workload | [``] Details: $WorkloadDetailMode | [Enter] Commit | [Esc] Cancel"
     }
     if ($CurrentTab -eq 2) {
         return "[1][2][3] Tab | [Up/Down] Nav | [Space] Set Blueprint | [A] Queue Ideal States | [Enter] Commit | [Esc] Cancel"
     }
     return "[1][2][3] Tab | [Up/Down] Nav | [Space] Toggle Override | [Bksp] Clear Queue | [Enter] Commit | [Esc] Cancel"
+}
+
+function Get-NextWorkloadDetailMode {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentMode
+    )
+
+    switch ($CurrentMode) {
+        "None" { return "MixedOnly" }
+        "MixedOnly" { return "All" }
+        "All" { return "None" }
+        default { return "None" }
+    }
+}
+
+function Update-WorkloadDetailModeForKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$CurrentTab,
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentMode,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if ($CurrentTab -eq 1 -and $Key -eq "Oem3") {
+        $nextMode = Get-NextWorkloadDetailMode -CurrentMode $CurrentMode
+        return [pscustomobject]@{
+            Mode    = $nextMode
+            Changed = $true
+        }
+    }
+    return [pscustomobject]@{
+        Mode    = $CurrentMode
+        Changed = $false
+    }
+}
+
+function Should-RenderWorkloadDetails {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DetailMode,
+        [Parameter(Mandatory = $true)]
+        [string]$State
+    )
+
+    switch ($DetailMode) {
+        "All" { return $true }
+        "MixedOnly" { return ($State -eq "Mixed") }
+        default { return $false }
+    }
+}
+
+function Get-WorkloadDetailLines {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$WorkloadRow
+    )
+
+    $details = $WorkloadRow.PSObject.Properties["RuntimeDetails"]
+    if ($null -eq $details -or $null -eq $details.Value) {
+        return @()
+    }
+
+    $runtime = $details.Value
+    $rows = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($svc in @($runtime.Services)) {
+        $svcName = [string]$svc.Name
+        if ([string]::IsNullOrWhiteSpace($svcName)) { continue }
+        $rows.Add([pscustomobject]@{
+            Label = ("svc {0}" -f $svcName)
+            IsRunning = ($svc.IsRunning -eq $true)
+        })
+    }
+    foreach ($exe in @($runtime.Executables)) {
+        $exeName = [string]$exe.DisplayName
+        if ([string]::IsNullOrWhiteSpace($exeName)) {
+            $exeName = [string]$exe.Token
+        }
+        if ([string]::IsNullOrWhiteSpace($exeName)) { continue }
+        $rows.Add([pscustomobject]@{
+            Label = ("exe {0}" -f $exeName)
+            IsRunning = ($exe.IsRunning -eq $true)
+        })
+    }
+
+    return @($rows)
+}
+
+function Get-WorkloadStateText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$State,
+        [Parameter(Mandatory = $true)]
+        [psobject]$WorkloadRow
+    )
+
+    if ($State -ne "Mixed") {
+        return $State
+    }
+    $details = $WorkloadRow.PSObject.Properties["RuntimeDetails"]
+    if ($null -eq $details -or $null -eq $details.Value) {
+        return $State
+    }
+
+    $runtime = $details.Value
+    $matchedChecks = if ($null -eq $runtime.PSObject.Properties["MatchedChecks"]) { $null } else { $runtime.MatchedChecks }
+    $totalChecks = if ($null -eq $runtime.PSObject.Properties["TotalChecks"]) { $null } else { $runtime.TotalChecks }
+    if ($null -eq $matchedChecks -or $null -eq $totalChecks) {
+        return $State
+    }
+
+    return ("Mixed ({0}/{1})" -f [int]$matchedChecks, [int]$totalChecks)
 }
 
 function Get-DashboardPendingCommitStates {
@@ -557,6 +683,7 @@ function Start-Dashboard {
                 CurrentState = $curr
                 DesiredState = $curr
                 Description  = $desc
+                RuntimeDetails = $prop.Value.RuntimeDetails
                 ProfileType  = "App_Workload"
             }
         }
@@ -591,6 +718,7 @@ function Start-Dashboard {
     }
 
     $CurrentTab = Get-FirstTab -HasMultipleModes $script:HasMultipleModes
+    $workloadDetailMode = "None"
     $cursorIndex = 0
     $isRendering = $true
     $needsRedraw = $true
@@ -630,17 +758,37 @@ function Start-Dashboard {
                     Write-Host -NoNewline "|  "
                     $displayCurrentState = Get-DashboardDisplayState -CurrentTab $CurrentTab -State ([string]$state.CurrentState)
                     $displayDesiredState = Get-DashboardDisplayState -CurrentTab $CurrentTab -State ([string]$state.DesiredState)
+                    $workloadCurrentText = $displayCurrentState
+                    $workloadDesiredText = $displayDesiredState
+                    if ($CurrentTab -eq 1) {
+                        $workloadCurrentText = Get-WorkloadStateText -State $displayCurrentState -WorkloadRow $state
+                        $workloadDesiredText = Get-WorkloadStateText -State $displayDesiredState -WorkloadRow $state
+                    }
                     if ($displayCurrentState -eq $displayDesiredState) {
-                        Write-StateText -State $displayCurrentState
+                        Write-StateText -State $workloadCurrentText
                     } else {
-                        $currentText = $displayCurrentState
+                        $currentText = $workloadCurrentText
                         Write-StateText -State $currentText
                         $currentPadCount = 10 - $currentText.Length
                         if ($currentPadCount -gt 0) { Write-Host -NoNewline (" " * $currentPadCount) }
                         Write-Host -NoNewline "->  "
-                        Write-StateText -State $displayDesiredState
+                        Write-StateText -State $workloadDesiredText
                     }
                     Write-Host ""
+
+                    if ($CurrentTab -eq 1 -and (Should-RenderWorkloadDetails -DetailMode $workloadDetailMode -State ([string]$state.CurrentState))) {
+                        $detailRows = @(Get-WorkloadDetailLines -WorkloadRow $state)
+                        foreach ($detail in $detailRows) {
+                            $detailLabel = ("     {0}" -f [string]$detail.Label).PadRight($nameColumnWidth)
+                            Write-Host -NoNewline $detailLabel -ForegroundColor DarkGray
+                            Write-Host -NoNewline "|  "
+                            if ($detail.IsRunning -eq $true) {
+                                Write-Host "+" -ForegroundColor Green
+                            } else {
+                                Write-Host "-" -ForegroundColor DarkGray
+                            }
+                        }
+                    }
                 }
 
                 Write-Host ""
@@ -656,7 +804,7 @@ function Start-Dashboard {
                     Write-Host ("").PadRight($descLineWidth)
                 }
                 Write-Host ""
-                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab) -ForegroundColor Gray
+                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode) -ForegroundColor Gray
             } else {
                 Write-Host "Component                      | Physical | Desired | Status"
                 Write-Host "-------------------------------+----------+---------+------------"
@@ -668,7 +816,7 @@ function Start-Dashboard {
                     Write-Host $line -ForegroundColor $view.Color
                 }
                 Write-Host ""
-                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab) -ForegroundColor Gray
+                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode) -ForegroundColor Gray
             }
 
             $needsRedraw = $false
@@ -746,6 +894,10 @@ function Start-Dashboard {
                             Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
                         }
                     }
+                }
+                "Oem3" {
+                    $detailUpdate = Update-WorkloadDetailModeForKey -CurrentTab $CurrentTab -CurrentMode $workloadDetailMode -Key "Oem3"
+                    $workloadDetailMode = [string]$detailUpdate.Mode
                 }
                 "A" {
                     if ($CurrentTab -eq 2) {

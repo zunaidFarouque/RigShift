@@ -78,6 +78,29 @@
       "action_override_off": [
         "'./CustomScripts/Monitors 60hz.lnk'"
       ]
+    },
+    "Gigabyte_Control_Center": {
+      "type": "process",
+      "name": "GCC.exe",
+      "action_override_on": [
+        "gsudo Start-Service -Name 'SMV4_Service'"
+      ],
+      "action_override_off": [
+        "gsudo Stop-Service -Name 'SMV4_Service' -Force",
+        "gsudo taskkill /F /IM GCC.exe",
+        "gsudo taskkill /F /IM GCCService.exe",
+        "gsudo taskkill /F /IM RGBFusion.exe"
+      ]
+    },
+    "Gigabyte_Fan_Battery_Control": {
+      "type": "process",
+      "name": "main.exe",
+      "action_override_on": [
+        "'./CustomScripts/Start_GFBC.lnk'"
+      ],
+      "action_override_off": [
+        "gsudo taskkill /F /IM main.exe"
+      ]
     }
   },
   "System_Modes": {
@@ -95,7 +118,9 @@
         "Bluetooth_Radio": "ON",
         "Battery_ACPI": "ON",
         "Unnecessary_Peripherals": "ON",
-        "Display_Refresh_Rate": "ON"
+        "Display_Refresh_Rate": "ON",
+        "Gigabyte_Control_Center": "ON",
+        "Gigabyte_Fan_Battery_Control": "OFF"
       }
     },
     "Live_Stage_Life": {
@@ -113,7 +138,9 @@
         "Bluetooth_Radio": "OFF",
         "Battery_ACPI": "OFF",
         "Unnecessary_Peripherals": "OFF",
-        "Display_Refresh_Rate": "OFF"
+        "Display_Refresh_Rate": "OFF",
+        "Gigabyte_Control_Center": "OFF",
+        "Gigabyte_Fan_Battery_Control": "ON"
       }
     },
     "Eco_Life": {
@@ -130,7 +157,9 @@
         "Bluetooth_Radio": "ANY",
         "Battery_ACPI": "ANY",
         "Unnecessary_Peripherals": "OFF",
-        "Display_Refresh_Rate": "ANY"
+        "Display_Refresh_Rate": "ANY",
+        "Gigabyte_Control_Center": "OFF",
+        "Gigabyte_Fan_Battery_Control": "ON"
       }
     }
   },
@@ -160,6 +189,19 @@
       ],
       "executables": [
         "'C:/Program Files/StarDesk/StarDesk.exe'"
+      ]
+    },
+    "GCC_Config_Mode": {
+      "description": "GIGABYTE Control Center runtime workload.",
+      "services": [
+        "GCCService",
+        "GIGABYTE Update Service",
+        "EasyTuneEngineService",
+        "SMV4_Service",
+        "GvEnergy"
+      ],
+      "executables": [
+        "'C:/Program Files/GIGABYTE/Control Center/GCC.exe'"
       ]
     }
   }

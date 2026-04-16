@@ -91,6 +91,56 @@ Describe "Workspace State Engine (Declarative Matrix)" {
         $state.AppWorkloads.DAW_Cubase.Status | Should -Be "Active"
         $state.AppWorkloads.DAW_Cubase.MatchedChecks | Should -Be 2
         $state.AppWorkloads.DAW_Cubase.TotalChecks | Should -Be 2
+        @($state.AppWorkloads.DAW_Cubase.RuntimeDetails.Services).Count | Should -Be 1
+        @($state.AppWorkloads.DAW_Cubase.RuntimeDetails.Executables).Count | Should -Be 1
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Services[0].Name | Should -Be "Audiosrv"
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Services[0].IsRunning | Should -BeTrue
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Executables[0].DisplayName | Should -Be "Cubase12.exe"
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Executables[0].IsRunning | Should -BeTrue
+    }
+
+    It "captures mixed runtime details for workloads with partial matches" {
+        '{"Active_System_Mode":"Live_Stage_Life"}' | Set-Content -Path $script:statePath -Encoding UTF8
+        Mock -CommandName Get-Service -MockWith {
+            param([string]$Name)
+            if ($Name -eq "Audiosrv") { return [pscustomobject]@{ Status = "Stopped" } }
+            if ($Name -eq "wuauserv") { return [pscustomobject]@{ Status = "Stopped" } }
+            return $null
+        }
+        Mock -CommandName Get-Process -MockWith { [pscustomobject]@{ Name = "Cubase12" } }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { 1 }
+        Mock -CommandName powercfg -MockWith { "Power Scheme GUID: 1234  (Ultimate Performance)" }
+        Mock -CommandName Get-CimInstance -MockWith { $null }
+
+        $state = Get-WorkspaceState -Workspace $script:config
+
+        $state.AppWorkloads.DAW_Cubase.Status | Should -Be "Mixed"
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.MatchedChecks | Should -Be 1
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.TotalChecks | Should -Be 2
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Services[0].IsRunning | Should -BeFalse
+        $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Executables[0].IsRunning | Should -BeTrue
+    }
+
+    It "provides stable empty runtime details when workload has no checks" {
+        $script:config.App_Workloads = [pscustomobject]@{
+            Empty_Workload = [pscustomobject]@{
+                services = @()
+                executables = @()
+            }
+        }
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "Power Scheme GUID: 9999  (Power saver)" }
+        Mock -CommandName Get-CimInstance -MockWith { $null }
+
+        $state = Get-WorkspaceState -Workspace $script:config
+
+        $state.AppWorkloads.Empty_Workload.Status | Should -Be "Inactive"
+        $state.AppWorkloads.Empty_Workload.RuntimeDetails.MatchedChecks | Should -Be 0
+        $state.AppWorkloads.Empty_Workload.RuntimeDetails.TotalChecks | Should -Be 0
+        @($state.AppWorkloads.Empty_Workload.RuntimeDetails.Services).Count | Should -Be 0
+        @($state.AppWorkloads.Empty_Workload.RuntimeDetails.Executables).Count | Should -Be 0
     }
 
     It "uses persisted Active_System_Mode for strict Active/Inactive status" {

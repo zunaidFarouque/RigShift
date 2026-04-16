@@ -308,7 +308,7 @@ Describe "Dashboard Tab 2/3 Queue Workflow" {
     }
 
     It "renders tab-specific footer action text" {
-        Get-DashboardFooterText -CurrentTab 1 | Should -Match '\[Space\] Toggle Workload \| \[Enter\] Commit'
+        Get-DashboardFooterText -CurrentTab 1 | Should -Match '\[Space\] Toggle Workload \| \[`+\] Details: None \| \[Enter\] Commit'
         Get-DashboardFooterText -CurrentTab 2 | Should -Match '\[Space\] Set Blueprint \| \[A\] Queue Ideal States \| \[Enter\] Commit'
         Get-DashboardFooterText -CurrentTab 3 | Should -Match '\[Space\] Toggle Override \| \[Bksp\] Clear Queue \| \[Enter\] Commit'
     }
@@ -360,5 +360,87 @@ Describe "Dashboard Commit Scope Rules" {
         Invoke-DashboardCommit -PendingStates @() -PendingHardwareChanges $queue -OrchestratorPath "C:/fake/Orchestrator.ps1"
 
         $queue.Keys.Count | Should -Be 0
+    }
+}
+
+Describe "Dashboard Workload Detail Modes" {
+    BeforeAll {
+        $script:here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        . (Join-Path -Path $script:here -ChildPath "Dashboard.ps1")
+    }
+
+    It "cycles detail mode in the expected order" {
+        Get-NextWorkloadDetailMode -CurrentMode "None" | Should -Be "MixedOnly"
+        Get-NextWorkloadDetailMode -CurrentMode "MixedOnly" | Should -Be "All"
+        Get-NextWorkloadDetailMode -CurrentMode "All" | Should -Be "None"
+        Get-NextWorkloadDetailMode -CurrentMode "Unexpected" | Should -Be "None"
+    }
+
+    It "toggles detail mode only on workload tab when tilde is pressed" {
+        $result = Update-WorkloadDetailModeForKey -CurrentTab 1 -CurrentMode "None" -Key "Oem3"
+        $result.Mode | Should -Be "MixedOnly"
+        $result.Changed | Should -BeTrue
+
+        $tab2 = Update-WorkloadDetailModeForKey -CurrentTab 2 -CurrentMode "None" -Key "Oem3"
+        $tab2.Mode | Should -Be "None"
+        $tab2.Changed | Should -BeFalse
+
+        $tab3 = Update-WorkloadDetailModeForKey -CurrentTab 3 -CurrentMode "None" -Key "Oem3"
+        $tab3.Mode | Should -Be "None"
+        $tab3.Changed | Should -BeFalse
+    }
+
+    It "renders details by mode rules" {
+        Should-RenderWorkloadDetails -DetailMode "None" -State "Mixed" | Should -BeFalse
+        Should-RenderWorkloadDetails -DetailMode "MixedOnly" -State "Active" | Should -BeFalse
+        Should-RenderWorkloadDetails -DetailMode "MixedOnly" -State "Mixed" | Should -BeTrue
+        Should-RenderWorkloadDetails -DetailMode "All" -State "Inactive" | Should -BeTrue
+    }
+
+    It "builds compact detail rows with svc/exe labels and runtime flags" {
+        $row = [pscustomobject]@{
+            Name = "Office"
+            RuntimeDetails = [pscustomobject]@{
+                Services = @(
+                    [pscustomobject]@{ Name = "ClickToRunSvc"; IsRunning = $true }
+                )
+                Executables = @(
+                    [pscustomobject]@{ Token = "'C:/Program Files/Microsoft OneDrive/OneDrive.exe'"; DisplayName = "OneDrive.exe"; IsRunning = $false }
+                )
+                MatchedChecks = 1
+                TotalChecks = 2
+            }
+        }
+
+        $rows = @(Get-WorkloadDetailLines -WorkloadRow $row)
+        $rows.Count | Should -Be 2
+        $rows[0].Label | Should -Be "svc ClickToRunSvc"
+        $rows[0].IsRunning | Should -BeTrue
+        $rows[1].Label | Should -Be "exe OneDrive.exe"
+        $rows[1].IsRunning | Should -BeFalse
+    }
+
+    It "formats mixed status with check counts only for mixed rows" {
+        $mixedRow = [pscustomobject]@{
+            RuntimeDetails = [pscustomobject]@{
+                MatchedChecks = 1
+                TotalChecks = 2
+            }
+        }
+        $inactiveRow = [pscustomobject]@{
+            RuntimeDetails = [pscustomobject]@{
+                MatchedChecks = 0
+                TotalChecks = 2
+            }
+        }
+
+        Get-WorkloadStateText -State "Mixed" -WorkloadRow $mixedRow | Should -Be "Mixed (1/2)"
+        Get-WorkloadStateText -State "Inactive" -WorkloadRow $inactiveRow | Should -Be "Inactive"
+    }
+
+    It "includes detail mode hint in tab 1 footer only" {
+        Get-DashboardFooterText -CurrentTab 1 -WorkloadDetailMode "All" | Should -Match '\[`\] Details: All'
+        Get-DashboardFooterText -CurrentTab 2 -WorkloadDetailMode "All" | Should -Not -Match 'Details:'
+        Get-DashboardFooterText -CurrentTab 3 -WorkloadDetailMode "All" | Should -Not -Match 'Details:'
     }
 }
