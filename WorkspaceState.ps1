@@ -297,6 +297,10 @@ function Get-WorkspaceState {
     foreach ($hardwareProp in $hardwareDefinitions.PSObject.Properties) {
         $componentKey = $hardwareProp.Name
         $definition = $hardwareProp.Value
+        $componentDescription = ""
+        if ($null -ne $definition.PSObject.Properties["description"]) {
+            $componentDescription = [string]$definition.description
+        }
         $physicalState = Get-HardwarePhysicalState -DefinitionKey $componentKey -Definition $definition -PnpCache $PnpCache
         $targetState = "ANY"
         if ($null -ne $activeModeTargets -and $null -ne $activeModeTargets.PSObject.Properties[$componentKey]) {
@@ -311,6 +315,7 @@ function Get-WorkspaceState {
         $compliance += [pscustomobject]@{
             Mode          = $activeSystemMode
             Component     = $componentKey
+            Description   = $componentDescription
             PhysicalState = $physicalState
             TargetState   = $targetState
             DesiredState  = $physicalState

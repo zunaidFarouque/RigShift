@@ -9,6 +9,7 @@
   },
   "Hardware_Definitions": {
     "GPU_Scheduling_HAGS": {
+      "description": "Hardware-accelerated GPU scheduling toggle (restart required after changes).",
       "type": "registry",
       "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers",
       "name": "HwSchMode",
@@ -17,6 +18,7 @@
       "post_change_message": "[CRITICAL] HAGS state altered. RESTART your PC to apply hybrid graphics changes."
     },
     "Windows_Update": {
+      "description": "Windows Update service availability and patch activity control.",
       "type": "service",
       "name": "wuauserv",
       "action_override_on": [
@@ -27,18 +29,22 @@
       ]
     },
     "Search_Indexer": {
+      "description": "Windows Search indexing service used for fast file and app lookup.",
       "type": "service",
       "name": "WSearch"
     },
     "SMB_Server_Service": {
+      "description": "SMB file sharing server component for sharing local resources.",
       "type": "service",
       "name": "LanmanServer"
     },
     "SMB_Workstation_Service": {
+      "description": "SMB client component for accessing shared network resources.",
       "type": "service",
       "name": "LanmanWorkstation"
     },
     "Wi_Fi_Adapter": {
+      "description": "Wireless network adapter presence and active availability.",
       "type": "pnp_device",
       "match": [
         "*Wi-Fi*",
@@ -46,24 +52,28 @@
       ]
     },
     "Ethernet_Port": {
+      "description": "Wired LAN adapter presence and active availability.",
       "type": "pnp_device",
       "match": [
         "*2.5GbE*"
       ]
     },
     "Bluetooth_Radio": {
+      "description": "Bluetooth radio availability for wireless peripherals.",
       "type": "pnp_device",
       "match": [
         "*Bluetooth*"
       ]
     },
     "Battery_ACPI": {
+      "description": "Battery ACPI device detection for mobile power management.",
       "type": "pnp_device",
       "match": [
         "*ACPI*"
       ]
     },
     "Unnecessary_Peripherals": {
+      "description": "Optional camera and biometric peripherals that can be disabled in focused modes.",
       "type": "pnp_device",
       "match": [
         "*Camera*",
@@ -73,6 +83,7 @@
       ]
     },
     "Display_High_Refresh_Rate": {
+      "description": "High-refresh display mode state (above 60 Hz detected as ON).",
       "type": "stateless",
       "action_override_on": [
         "'./CustomScripts/Set-HighRefreshByMonitorCount.ps1'"
@@ -82,6 +93,7 @@
       ]
     },
     "Gigabyte_Control_Center": {
+      "description": "Gigabyte Control Center (heavy, bloated but have more features).",
       "type": "process",
       "name": "GCC.exe",
       "action_override_on": [
@@ -92,6 +104,7 @@
       ]
     },
     "Gigabyte_Fan_Battery_Control": {
+      "description": "Gigabyte fan/battery control (lightweight, good for real time performance).",
       "type": "process",
       "name": "main.exe",
       "action_override_on": [

@@ -1223,6 +1223,18 @@ function Start-Dashboard {
                     Write-Host $line -ForegroundColor $view.Color
                 }
                 Write-Host ""
+                if (@($script:ComplianceData).Count -gt 0) {
+                    $selected = $script:ComplianceData[$cursorIndex]
+                    $desc = [string]$selected.Description
+                    if ([string]::IsNullOrWhiteSpace($desc)) {
+                        $desc = ""
+                    }
+                    $descLine = ("  " + $desc).PadRight($descLineWidth)
+                    Write-Host $descLine.Substring(0, [Math]::Min($descLine.Length, $descLineWidth)) -ForegroundColor Cyan
+                } else {
+                    Write-Host ("").PadRight($descLineWidth)
+                }
+                Write-Host ""
                 Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode) -ForegroundColor Gray
             } else {
                 Write-Host ("   {0}" -f "Settings").PadRight($nameColumnWidth)
