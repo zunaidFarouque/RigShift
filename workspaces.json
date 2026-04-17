@@ -176,46 +176,85 @@
     }
   },
   "App_Workloads": {
-    "DAW_Cubase": {
-      "description": "Digital Audio Workstation runtime.",
-      "services": [
-        "Audiosrv"
-      ],
-      "executables": [
-        "'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe'"
-      ]
+    "Audio": {
+      "DAW_Cubase": {
+        "description": "Digital Audio Workstation runtime.",
+        "services": [
+          "Audiosrv"
+        ],
+        "executables": [
+          "'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe'"
+        ],
+        "tags": [
+          "audio",
+          "production",
+          "daw"
+        ],
+        "priority": 10,
+        "favorite": true,
+        "hidden": false,
+        "aliases": [
+          "Cubase"
+        ]
+      }
     },
     "Office": {
-      "description": "Microsoft Office and OneDrive workload.",
-      "services": [
-        "ClickToRunSvc"
-      ],
-      "executables": [
-        "'C:/Program Files/Microsoft OneDrive/OneDrive.exe'"
-      ],
-      "intercepts": [
-        {
-          "exe": [
-            "WINWORD.EXE",
-            "EXCEL.EXE",
-            "POWERPNT.EXE"
-          ],
-          "requires": {
-            "services": [
-              "ClickToRunSvc"
-            ]
+      "Office": {
+        "description": "Microsoft Office and OneDrive workload.",
+        "services": [
+          "ClickToRunSvc"
+        ],
+        "executables": [
+          "'C:/Program Files/Microsoft OneDrive/OneDrive.exe'"
+        ],
+        "tags": [
+          "office",
+          "productivity",
+          "microsoft"
+        ],
+        "priority": 20,
+        "favorite": true,
+        "hidden": false,
+        "aliases": [
+          "Microsoft Office",
+          "M365"
+        ],
+        "intercepts": [
+          {
+            "exe": [
+              "WINWORD.EXE",
+              "EXCEL.EXE",
+              "POWERPNT.EXE"
+            ],
+            "requires": {
+              "services": [
+                "ClickToRunSvc"
+              ]
+            }
           }
-        }
-      ]
+        ]
+      }
     },
-    "StarDesk": {
-      "description": "StarDesk service and desktop app workload.",
-      "services": [
-        "StarDeskService"
-      ],
-      "executables": [
-        "'C:/Program Files/StarDesk/StarDesk.exe'"
-      ]
+    "Tools": {
+      "StarDesk": {
+        "description": "StarDesk service and desktop app workload.",
+        "services": [
+          "StarDeskService"
+        ],
+        "executables": [
+          "'C:/Program Files/StarDesk/StarDesk.exe'"
+        ],
+        "tags": [
+          "desk",
+          "utility"
+        ],
+        "priority": 30,
+        "favorite": false,
+        "hidden": false,
+        "aliases": [
+          "Star Desk"
+        ]
+      }
     }
   }
 }

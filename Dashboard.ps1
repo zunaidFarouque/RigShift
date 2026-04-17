@@ -16,8 +16,15 @@ $script:ComplianceData = @()
 $script:WorkloadStates = @()
 $script:ModeStates = @()
 $script:SettingsStates = @()
+$script:ActionStates = @()
 $script:HasMultipleModes = $false
 $script:PendingHardwareChanges = @{}
+$script:WorkloadFilterState = [pscustomobject]@{
+    Query         = ""
+    Domain        = ""
+    FavoritesOnly = $false
+    MixedOnly     = $false
+}
 
 function Invoke-OrchestratorScript {
     [CmdletBinding()]
@@ -30,13 +37,22 @@ function Invoke-OrchestratorScript {
         [ValidateSet("Start", "Stop")]
         [string]$Action,
         [ValidateSet("App_Workload", "System_Mode", "Hardware_Override")]
-        [string]$ProfileType
+        [string]$ProfileType,
+        [switch]$SkipInterceptorSync
     )
 
     if ([string]::IsNullOrWhiteSpace($ProfileType)) {
-        & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action
+        if ($SkipInterceptorSync.IsPresent) {
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -SkipInterceptorSync
+        } else {
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action
+        }
     } else {
-        & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ProfileType $ProfileType
+        if ($SkipInterceptorSync.IsPresent) {
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ProfileType $ProfileType -SkipInterceptorSync
+        } else {
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ProfileType $ProfileType
+        }
     }
 }
 
@@ -284,19 +300,262 @@ function Get-DashboardFooterText {
     param(
         [Parameter(Mandatory = $true)]
         [int]$CurrentTab,
-        [string]$WorkloadDetailMode = "None"
+        [string]$WorkloadDetailMode = "None",
+        [string]$CommitMode = "Exit"
     )
 
+    $commitModeHint = ("[R] {0}" -f (Get-DashboardCommitModeText -CommitMode $CommitMode))
+    $commitAction = if ($CommitMode -eq "Return") { "Return" } else { "Exit" }
+
     if ($CurrentTab -eq 1) {
-        return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle Workload | [``] Details: $WorkloadDetailMode | [Enter] Commit | [Esc] Cancel"
+        $domainText = "All"
+        if (-not [string]::IsNullOrWhiteSpace([string]$script:WorkloadFilterState.Domain)) {
+            $domainText = [string]$script:WorkloadFilterState.Domain
+        }
+        $favoriteText = "Off"
+        if ($script:WorkloadFilterState.FavoritesOnly) {
+            $favoriteText = "On"
+        }
+        $mixedText = "Off"
+        if ($script:WorkloadFilterState.MixedOnly) {
+            $mixedText = "On"
+        }
+        $filterText = "[``]Details: {0} | [M]ixed={1} | [/]Filters: q='{2}' | [G]roup='{3}' | [F]avourites={4}" -f `
+            $WorkloadDetailMode, `
+            $mixedText, `
+            [string]$script:WorkloadFilterState.Query, `
+            $domainText, `
+            $favoriteText
+        return "$filterText`n[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle | [R] CommitMode`n[Enter] Commit & $commitAction | [Esc] Cancel"
     }
     if ($CurrentTab -eq 2) {
-        return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Set Blueprint | [A] Queue Ideal States | [Enter] Commit | [Esc] Cancel"
+        return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Set Blueprint | [A] Queue Ideal States | [Enter] Commit | $commitModeHint | [Esc] Cancel"
     }
     if ($CurrentTab -eq 4) {
-        return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Queue Toggle/Cycle | [Right] Edit | [Left or +/-] Poll Seconds | [Enter] Commit | [Esc] Cancel"
+        return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting | [Right] Edit | [Left or +/-] Poll Seconds | [Enter] Commit/Confirm Action | Actions are exclusive | $commitModeHint | [Esc] Cancel"
     }
-    return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle Override | [Bksp] Clear Queue | [Enter] Commit | [Esc] Cancel"
+    return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle Override | [Bksp] Clear Queue | [Enter] Commit | $commitModeHint | [Esc] Cancel"
+}
+
+function Get-DashboardCommitModeDefault {
+    [CmdletBinding()]
+    param()
+    return "Exit"
+}
+
+function Toggle-DashboardCommitMode {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentMode
+    )
+
+    if ($CurrentMode -eq "Exit") {
+        return "Return"
+    }
+    return "Exit"
+}
+
+function Get-DashboardCommitModeText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommitMode
+    )
+
+    $normalized = if ($CommitMode -eq "Return") { "Return" } else { "Exit" }
+    return ("CommitMode: {0}" -f $normalized)
+}
+
+function Resolve-DashboardPostCommitAction {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommitMode,
+        [Parameter(Mandatory = $true)]
+        [bool]$HasPostCommitMessages,
+        [Parameter(Mandatory = $false)]
+        [scriptblock]$ReadKeyScript = $null
+    )
+
+    if ($CommitMode -ne "Return") {
+        if ($HasPostCommitMessages) {
+            Write-Host ""
+            Write-Host "Press any key to exit..." -ForegroundColor White
+            if ($null -ne $ReadKeyScript) {
+                [void](& $ReadKeyScript)
+            } else {
+                [Console]::ReadKey($true) | Out-Null
+            }
+        }
+        return "Exit"
+    }
+
+    Write-Host ""
+    Write-Host "Press any key to return to dashboard. Press Esc to exit." -ForegroundColor White
+    $keyInfo = if ($null -ne $ReadKeyScript) { & $ReadKeyScript } else { [Console]::ReadKey($true) }
+    if ($null -ne $keyInfo -and $keyInfo.Key -eq [ConsoleKey]::Escape) {
+        return "Exit"
+    }
+    return "ReturnToDashboard"
+}
+
+function Invoke-DashboardCommitFlow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$WorkloadStates,
+        [Parameter(Mandatory = $true)]
+        [array]$ModeStates,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$PendingHardwareChanges,
+        [Parameter(Mandatory = $true)]
+        [string]$OrchestratorPath,
+        [Parameter(Mandatory = $true)]
+        [string]$StateFilePath,
+        [Parameter(Mandatory = $true)]
+        [string]$JsonPath,
+        [Parameter(Mandatory = $true)]
+        [psobject]$Workspaces,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [array]$SettingsRows,
+        [Parameter(Mandatory = $true)]
+        [string]$CommitMode,
+        [Parameter(Mandatory = $false)]
+        [scriptblock]$ReadKeyScript = $null
+    )
+
+    Invoke-SafeClearHost
+    Write-Host "Committing state changes..."
+
+    Save-DashboardStateMemory -ModeStates $ModeStates -StateFilePath $StateFilePath
+    $pendingStates = @(Get-DashboardPendingCommitStates -WorkloadStates $WorkloadStates -PendingHardwareChanges $PendingHardwareChanges)
+    Invoke-DashboardCommit -PendingStates $pendingStates -PendingHardwareChanges $PendingHardwareChanges -OrchestratorPath $OrchestratorPath -JsonPath $JsonPath -Workspaces $Workspaces -SettingsRows $SettingsRows
+
+    $pendingMessages = @(Get-DashboardPostCommitMessages -UIStates @($pendingStates) -Workspaces $Workspaces)
+    if ($pendingMessages.Count -gt 0) {
+        Write-Host ""
+        Write-Host "=== REQUIRED ACTIONS ===" -ForegroundColor Yellow
+        foreach ($msg in $pendingMessages) {
+            Write-Host $msg -ForegroundColor Cyan
+        }
+    } else {
+        Write-Host "[ SUCCESS ] Workspaces updated."
+    }
+
+    return (Resolve-DashboardPostCommitAction -CommitMode $CommitMode -HasPostCommitMessages ($pendingMessages.Count -gt 0) -ReadKeyScript $ReadKeyScript)
+}
+
+function Test-WorkloadMatchesQuery {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Row,
+        [AllowEmptyString()]
+        [string]$Query
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Query)) {
+        return $true
+    }
+
+    $needle = [string]$Query
+    if ([string]$Row.Name -like "*$needle*") { return $true }
+    if ([string]$Row.Domain -like "*$needle*") { return $true }
+    foreach ($tag in @($Row.Tags)) {
+        if ([string]$tag -like "*$needle*") { return $true }
+    }
+    foreach ($alias in @($Row.Aliases)) {
+        if ([string]$alias -like "*$needle*") { return $true }
+    }
+    return $false
+}
+
+function Get-FilteredWorkloadStates {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$WorkloadStates,
+        [Parameter(Mandatory = $true)]
+        [psobject]$FilterState
+    )
+
+    return @(
+        $WorkloadStates |
+            Where-Object {
+                if ($_.Hidden -eq $true -and [string]::IsNullOrWhiteSpace([string]$FilterState.Query)) { return $false }
+                if (-not [string]::IsNullOrWhiteSpace([string]$FilterState.Domain) -and [string]$_.Domain -ne [string]$FilterState.Domain) { return $false }
+                if ($FilterState.FavoritesOnly -and $_.Favorite -ne $true) { return $false }
+                if ($FilterState.MixedOnly -and [string]$_.CurrentState -ne "Mixed") { return $false }
+                if (-not (Test-WorkloadMatchesQuery -Row $_ -Query ([string]$FilterState.Query))) { return $false }
+                return $true
+            } |
+            Sort-Object -Property `
+                @{ Expression = { [int]$_.Priority }; Ascending = $true }, `
+                @{ Expression = { [string]$_.Name }; Ascending = $true }
+    )
+}
+
+function Get-WorkloadDomains {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$WorkloadStates
+    )
+
+    return @(
+        $WorkloadStates |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.Domain) } |
+            Select-Object -ExpandProperty Domain -Unique |
+            Sort-Object
+    )
+}
+
+function Update-WorkloadDomainFilter {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$WorkloadStates,
+        [Parameter(Mandatory = $true)]
+        [psobject]$FilterState
+    )
+
+    $domains = @("") + @(Get-WorkloadDomains -WorkloadStates $WorkloadStates)
+    $current = [string]$FilterState.Domain
+    $idx = [array]::IndexOf($domains, $current)
+    if ($idx -lt 0) { $idx = 0 }
+    $next = ($idx + 1) % [Math]::Max($domains.Count, 1)
+    $FilterState.Domain = [string]$domains[$next]
+}
+
+function Get-ViewportRange {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$TotalCount,
+        [Parameter(Mandatory = $true)]
+        [int]$CursorIndex,
+        [Parameter(Mandatory = $true)]
+        [int]$WindowSize
+    )
+
+    if ($TotalCount -le 0) {
+        return [pscustomobject]@{ Start = 0; End = -1 }
+    }
+    $safeWindow = [Math]::Max(1, $WindowSize)
+    if ($TotalCount -le $safeWindow) {
+        return [pscustomobject]@{ Start = 0; End = ($TotalCount - 1) }
+    }
+
+    $half = [Math]::Floor($safeWindow / 2)
+    $start = [Math]::Max(0, $CursorIndex - $half)
+    $end = $start + $safeWindow - 1
+    if ($end -ge $TotalCount) {
+        $end = $TotalCount - 1
+        $start = [Math]::Max(0, $end - $safeWindow + 1)
+    }
+    return [pscustomobject]@{ Start = $start; End = $end }
 }
 
 function Get-NextWorkloadDetailMode {
@@ -478,19 +737,18 @@ function Invoke-DashboardCommit {
         Save-DashboardConfigSettings -JsonPath $JsonPath -Workspaces $Workspaces -SettingsRows $settingsRowsArray
     }
 
-    if (@($PendingStates).Count -gt 0) {
-        Invoke-WorkspaceCommit -UIStates $PendingStates -OrchestratorPath $OrchestratorPath
-    } else {
-        # Settings-only commit path: run orchestrator once so it can apply config-driven
-        # side effects (e.g. interceptor sync/cleanup) and print status.
-        try {
-            Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName "__SYNC_ONLY__" -Action "Start"
-        } catch {
-            # Expected when using dummy workspace name; sync still runs before resolution.
-            if ([string]$_.Exception.Message -notmatch "Fatal: Workspace '__SYNC_ONLY__' not defined in workspaces\.json\.") {
-                throw
-            }
+    # Perform one sync pass per commit, then suppress per-item resync calls.
+    try {
+        Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName "__SYNC_ONLY__" -Action "Start"
+    } catch {
+        # Expected when using dummy workspace name; sync still runs before resolution.
+        if ([string]$_.Exception.Message -notmatch "Fatal: Workspace '__SYNC_ONLY__' not defined in workspaces\.json\.") {
+            throw
         }
+    }
+
+    if (@($PendingStates).Count -gt 0) {
+        Invoke-WorkspaceCommit -UIStates $PendingStates -OrchestratorPath $OrchestratorPath -SkipInterceptorSync
     }
     $PendingHardwareChanges.Clear()
 }
@@ -552,7 +810,8 @@ function Invoke-WorkspaceCommit {
         [Parameter(Mandatory = $true)]
         [array]$UIStates,
         [Parameter(Mandatory = $true)]
-        [string]$OrchestratorPath
+        [string]$OrchestratorPath,
+        [switch]$SkipInterceptorSync
     )
 
     foreach ($state in $UIStates) {
@@ -571,9 +830,9 @@ function Invoke-WorkspaceCommit {
             Write-Host "--> Orchestrating $($state.Name) to $action..."
             $profileType = if ($null -ne $state.PSObject.Properties["ProfileType"]) { [string]$state.ProfileType } else { "" }
             if ([string]::IsNullOrWhiteSpace($profileType)) {
-                Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName $state.Name -Action $action
+                Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName $state.Name -Action $action -SkipInterceptorSync:$SkipInterceptorSync.IsPresent
             } else {
-                Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName $state.Name -Action $action -ProfileType $profileType
+                Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName $state.Name -Action $action -ProfileType $profileType -SkipInterceptorSync:$SkipInterceptorSync.IsPresent
             }
             Start-Sleep -Seconds 1
         }
@@ -597,12 +856,14 @@ function Get-ActiveStateArray {
         [Parameter(Mandatory = $true)]
         [array]$ModeStates,
         [Parameter(Mandatory = $false)]
-        [array]$SettingsStates = @()
+        [array]$SettingsStates = @(),
+        [Parameter(Mandatory = $false)]
+        [array]$ActionStates = @()
     )
 
-    if ($CurrentTab -eq 1) { return ,@($WorkloadStates) }
+    if ($CurrentTab -eq 1) { return ,@(Get-FilteredWorkloadStates -WorkloadStates $WorkloadStates -FilterState $script:WorkloadFilterState) }
     if ($CurrentTab -eq 2) { return ,@($ModeStates) }
-    if ($CurrentTab -eq 4) { return ,@($SettingsStates) }
+    if ($CurrentTab -eq 4) { return ,@(Get-DashboardTab4Rows -SettingsRows $SettingsStates -ActionRows $ActionStates) }
     return ,@()
 }
 
@@ -704,6 +965,210 @@ function Get-DashboardSettingsRows {
     return @($rows)
 }
 
+function Get-DashboardActionDefinitions {
+    [CmdletBinding()]
+    param()
+
+    return @(
+        [pscustomobject]@{
+            Key         = "Reset_Interceptors"
+            ActionId    = "Reset_Interceptors"
+            Description = "Resets managed IFEO hooks, disables interceptors, and stops interceptor helper polling processes."
+            Example     = "Use when interception is stuck or looping."
+        }
+    )
+}
+
+function Get-DashboardActionRows {
+    [CmdletBinding()]
+    param()
+
+    $rows = @()
+    foreach ($def in @(Get-DashboardActionDefinitions)) {
+        $rows += [pscustomobject]@{
+            Key         = [string]$def.Key
+            ActionId    = [string]$def.ActionId
+            Type        = "action"
+            Description = [string]$def.Description
+            Example     = [string]$def.Example
+        }
+    }
+    return @($rows)
+}
+
+function Get-DashboardTab4Rows {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [array]$SettingsRows,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [array]$ActionRows
+    )
+
+    $rows = @()
+    foreach ($setting in @($SettingsRows)) {
+        $rows += $setting
+    }
+
+    if (@($ActionRows).Count -gt 0) {
+        $rows += [pscustomobject]@{
+            Type        = "section"
+            Label       = "-------- Actions --------"
+            Description = "One-time actions run exclusively and are not part of normal batch commit."
+            Example     = "Press Enter once to confirm, then Enter again to run."
+        }
+        foreach ($action in @($ActionRows)) {
+            $rows += $action
+        }
+    }
+
+    return @($rows)
+}
+
+function Test-DashboardTab4RowIsAction {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Row
+    )
+    return ([string]$Row.Type -eq "action" -and -not [string]::IsNullOrWhiteSpace([string]$Row.ActionId))
+}
+
+function Test-DashboardTab4RowIsSection {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Row
+    )
+    return ([string]$Row.Type -eq "section")
+}
+
+function Test-DashboardTab4RowIsSetting {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Row
+    )
+    return (-not (Test-DashboardTab4RowIsAction -Row $Row) -and -not (Test-DashboardTab4RowIsSection -Row $Row))
+}
+
+function Get-DashboardTab4RowValueDisplay {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Row,
+        [AllowEmptyString()]
+        [string]$PendingActionConfirmId = ""
+    )
+
+    if (Test-DashboardTab4RowIsSection -Row $Row) {
+        return ""
+    }
+    if (Test-DashboardTab4RowIsAction -Row $Row) {
+        if ([string]$PendingActionConfirmId -eq [string]$Row.ActionId) {
+            return "Confirm: Enter"
+        }
+        return "Run"
+    }
+    return (Get-DashboardSettingValueDisplay -Row $Row)
+}
+
+function Test-DashboardHasPendingSettingsChanges {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$SettingsRows
+    )
+
+    foreach ($row in @($SettingsRows)) {
+        if (Test-DashboardSettingsRowPending -Row $row) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Resolve-DashboardActionEnterDecision {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Row,
+        [AllowEmptyString()]
+        [string]$PendingActionConfirmId = "",
+        [Parameter(Mandatory = $true)]
+        [array]$SettingsRows
+    )
+
+    if (-not (Test-DashboardTab4RowIsAction -Row $Row)) {
+        return [pscustomobject]@{
+            Decision            = "Commit"
+            NextPendingActionId = ""
+            Message             = ""
+        }
+    }
+
+    if (Test-DashboardHasPendingSettingsChanges -SettingsRows $SettingsRows) {
+        return [pscustomobject]@{
+            Decision            = "BlockedByPendingSettings"
+            NextPendingActionId = ""
+            Message             = "Action requires exclusive run. Commit or clear pending settings first."
+        }
+    }
+
+    if ([string]$PendingActionConfirmId -eq [string]$Row.ActionId) {
+        return [pscustomobject]@{
+            Decision            = "ExecuteAction"
+            NextPendingActionId = ""
+            Message             = ""
+        }
+    }
+
+    return [pscustomobject]@{
+        Decision            = "ArmAction"
+        NextPendingActionId = [string]$Row.ActionId
+        Message             = "Press Enter again to run."
+    }
+}
+
+function Invoke-DashboardActionById {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ActionId,
+        [Parameter(Mandatory = $true)]
+        [array]$SettingsRows,
+        [Parameter(Mandatory = $true)]
+        [string]$JsonPath,
+        [Parameter(Mandatory = $true)]
+        [psobject]$Workspaces,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$PendingHardwareChanges,
+        [Parameter(Mandatory = $true)]
+        [string]$OrchestratorPath
+    )
+
+    switch ($ActionId) {
+        "Reset_Interceptors" {
+            $result = Invoke-DashboardGlobalInterceptorReset `
+                -SettingsRows $SettingsRows `
+                -JsonPath $JsonPath `
+                -Workspaces $Workspaces `
+                -PendingHardwareChanges $PendingHardwareChanges `
+                -OrchestratorPath $OrchestratorPath
+            return [pscustomobject]@{
+                Success = $true
+                Message = ("Interceptors reset. Killed {0} helper process(es)." -f [int]$result.KilledProcessCount)
+                Result  = $result
+            }
+        }
+        default {
+            throw "Fatal: Unknown dashboard action '$ActionId'."
+        }
+    }
+}
+
 function Update-DashboardSettingsIntegerFromInput {
     [CmdletBinding()]
     param(
@@ -793,6 +1258,85 @@ function Update-DashboardSettingsNumericValue {
     if ($next -lt $min) { $next = $min }
     $Row.Value = $next
     return $true
+}
+
+function Get-DashboardSettingsRowByKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$SettingsRows,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    return @($SettingsRows | Where-Object { [string]$_.Key -eq $Key } | Select-Object -First 1)
+}
+
+function Stop-DashboardInterceptorHelperProcesses {
+    [CmdletBinding()]
+    param()
+
+    $killedCount = 0
+    $scan = @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)
+    foreach ($proc in $scan) {
+        $name = [string]$proc.Name
+        if ($name -ne "pwsh.exe" -and $name -ne "powershell.exe") { continue }
+        $cmdLine = ""
+        if ($null -ne $proc.PSObject.Properties["CommandLine"] -and $null -ne $proc.CommandLine) {
+            $cmdLine = [string]$proc.CommandLine
+        }
+        if ([string]::IsNullOrWhiteSpace($cmdLine)) { continue }
+        if ($cmdLine -notmatch "(?i)Interceptor(Poll)?\.ps1") { continue }
+        try {
+            Stop-Process -Id ([int]$proc.ProcessId) -Force -ErrorAction Stop
+            $killedCount++
+        } catch {
+            # Best effort cleanup only.
+        }
+    }
+
+    return $killedCount
+}
+
+function Invoke-DashboardGlobalInterceptorReset {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$SettingsRows,
+        [Parameter(Mandatory = $true)]
+        [string]$JsonPath,
+        [Parameter(Mandatory = $true)]
+        [psobject]$Workspaces,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$PendingHardwareChanges,
+        [Parameter(Mandatory = $true)]
+        [string]$OrchestratorPath
+    )
+
+    $enableRows = @(Get-DashboardSettingsRowByKey -SettingsRows $SettingsRows -Key "enable_interceptors")
+    if ($enableRows.Count -eq 0) {
+        throw "Fatal: Dashboard settings row 'enable_interceptors' was not found."
+    }
+
+    $row = $enableRows[0]
+    $row.Value = $false
+    if ($null -ne $row.PSObject.Properties["CurrentValue"]) {
+        $row.CurrentValue = $false
+    }
+
+    Invoke-DashboardCommit `
+        -PendingStates @() `
+        -PendingHardwareChanges $PendingHardwareChanges `
+        -OrchestratorPath $OrchestratorPath `
+        -JsonPath $JsonPath `
+        -Workspaces $Workspaces `
+        -SettingsRows $SettingsRows
+
+    $killedCount = Stop-DashboardInterceptorHelperProcesses
+    return [pscustomobject]@{
+        DisabledInterceptors = $true
+        KilledProcessCount   = [int]$killedCount
+    }
 }
 
 function Test-DashboardSettingRequiresNonEmpty {
@@ -960,6 +1504,52 @@ function Get-SafeConsoleWidth {
     return 120
 }
 
+function Get-SafeConsoleHeight {
+    [CmdletBinding()]
+    param()
+
+    try {
+        $h = [Console]::WindowHeight
+        if ($h -gt 0) { return $h }
+    } catch {
+    }
+
+    try {
+        $bh = [Console]::BufferHeight
+        if ($bh -gt 0) { return $bh }
+    } catch {
+    }
+
+    return 40
+}
+
+function Format-WorkloadDisplayName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$WorkloadRow
+    )
+
+    $name = [string]$WorkloadRow.Name
+    $domain = ""
+    if ($null -ne $WorkloadRow.PSObject.Properties["Domain"]) {
+        $domain = [string]$WorkloadRow.Domain
+    }
+
+    if ([string]::IsNullOrWhiteSpace($domain)) {
+        return $name
+    }
+
+    $group = $domain
+    if ($group.Length -gt 8) {
+        $group = $group.Substring(0, 8)
+    } else {
+        $group = $group.PadRight(8)
+    }
+
+    return ("[{0}] {1}" -f $group, $name)
+}
+
 function Invoke-SafeClearHost {
     [CmdletBinding()]
     param()
@@ -969,6 +1559,113 @@ function Invoke-SafeClearHost {
     } catch {
         # Non-interactive host can throw "The handle is invalid."
     }
+}
+
+function Update-DashboardRuntimeState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Workspaces,
+        [Parameter(Mandatory = $true)]
+        [array]$PnpCache
+    )
+
+    $stateEngine = Get-WorkspaceState -Workspace $Workspaces -PnpCache $PnpCache
+    $script:ComplianceData = @($stateEngine.Compliance)
+    Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
+
+    $workloadResults = $stateEngine.AppWorkloads
+    $modeResults = $stateEngine.SystemModes
+    $workloadsNode = $Workspaces.PSObject.Properties["App_Workloads"]
+    $modesNode = $Workspaces.PSObject.Properties["System_Modes"]
+
+    $script:WorkloadStates = @()
+    if ($null -ne $workloadResults) {
+        foreach ($prop in $workloadResults.PSObject.Properties) {
+            $desc = ""
+            $domain = ""
+            $tags = @()
+            $priority = 9999
+            $favorite = $false
+            $hidden = $false
+            $aliases = @()
+            if ($null -ne $prop.Value.PSObject.Properties["Domain"]) {
+                $domain = [string]$prop.Value.Domain
+            }
+            if ($null -ne $prop.Value.PSObject.Properties["Tags"]) {
+                $tags = @($prop.Value.Tags | ForEach-Object { [string]$_ })
+            }
+            if ($null -ne $prop.Value.PSObject.Properties["Priority"]) {
+                $priority = [int]$prop.Value.Priority
+            }
+            if ($null -ne $prop.Value.PSObject.Properties["Favorite"]) {
+                $favorite = ($prop.Value.Favorite -eq $true)
+            }
+            if ($null -ne $prop.Value.PSObject.Properties["Hidden"]) {
+                $hidden = ($prop.Value.Hidden -eq $true)
+            }
+            if ($null -ne $prop.Value.PSObject.Properties["Aliases"]) {
+                $aliases = @($prop.Value.Aliases | ForEach-Object { [string]$_ })
+            }
+            if ($null -ne $workloadsNode) {
+                foreach ($domainProp in @($workloadsNode.Value.PSObject.Properties)) {
+                    if ($null -eq $domainProp.Value) { continue }
+                    if ($null -eq $domainProp.Value.PSObject.Properties[$prop.Name]) { continue }
+                    $wlData = $domainProp.Value.PSObject.Properties[$prop.Name].Value
+                    if ($null -ne $wlData.PSObject.Properties["description"]) {
+                        $desc = [string]$wlData.description
+                    }
+                    break
+                }
+            }
+            $curr = [string]$prop.Value.Status
+            $script:WorkloadStates += [pscustomobject]@{
+                Name           = $prop.Name
+                CurrentState   = $curr
+                DesiredState   = $curr
+                Description    = $desc
+                Domain         = $domain
+                Tags           = @($tags)
+                Priority       = $priority
+                Favorite       = $favorite
+                Hidden         = $hidden
+                Aliases        = @($aliases)
+                RuntimeDetails = $prop.Value.RuntimeDetails
+                ProfileType    = "App_Workload"
+            }
+        }
+    }
+    $script:WorkloadStates = @(
+        $script:WorkloadStates |
+            Sort-Object -Property `
+                @{ Expression = { [int]$_.Priority }; Ascending = $true }, `
+                @{ Expression = { [string]$_.Name }; Ascending = $true }
+    )
+
+    $script:ModeStates = @()
+    if ($null -ne $modeResults) {
+        foreach ($prop in $modeResults.PSObject.Properties) {
+            $desc = ""
+            if ($null -ne $modesNode -and $null -ne $modesNode.Value.PSObject.Properties[$prop.Name]) {
+                $modeData = $modesNode.Value.PSObject.Properties[$prop.Name].Value
+                if ($null -ne $modeData.PSObject.Properties["description"]) {
+                    $desc = [string]$modeData.description
+                }
+            }
+            $curr = [string]$prop.Value.Status
+            $script:ModeStates += [pscustomobject]@{
+                Name         = $prop.Name
+                CurrentState = $curr
+                DesiredState = $curr
+                Description  = $desc
+                ProfileType  = "System_Mode"
+            }
+        }
+    }
+
+    $script:HasMultipleModes = ($script:ModeStates.Count -gt 1)
+    $script:SettingsStates = Get-DashboardSettingsRows -Workspaces $Workspaces
+    $script:ActionStates = Get-DashboardActionRows
 }
 
 function Start-DashboardAutoCommit {
@@ -1057,61 +1754,7 @@ function Start-Dashboard {
 
     Write-Host "Scanning hardware devices..." -ForegroundColor DarkGray
     $globalPnpCache = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue
-
-    $stateEngine = Get-WorkspaceState -Workspace $workspaces -PnpCache $globalPnpCache
-    $script:ComplianceData = @($stateEngine.Compliance)
-    Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
-
-    $workloadResults = $stateEngine.AppWorkloads
-    $modeResults = $stateEngine.SystemModes
-    $workloadsNode = $workspaces.PSObject.Properties["App_Workloads"]
-    $modesNode = $workspaces.PSObject.Properties["System_Modes"]
-
-    $script:WorkloadStates = @()
-    if ($null -ne $workloadResults) {
-        foreach ($prop in $workloadResults.PSObject.Properties) {
-            $desc = ""
-            if ($null -ne $workloadsNode -and $null -ne $workloadsNode.Value.PSObject.Properties[$prop.Name]) {
-                $wlData = $workloadsNode.Value.PSObject.Properties[$prop.Name].Value
-                if ($null -ne $wlData.PSObject.Properties["description"]) {
-                    $desc = [string]$wlData.description
-                }
-            }
-            $curr = [string]$prop.Value.Status
-            $script:WorkloadStates += [pscustomobject]@{
-                Name         = $prop.Name
-                CurrentState = $curr
-                DesiredState = $curr
-                Description  = $desc
-                RuntimeDetails = $prop.Value.RuntimeDetails
-                ProfileType  = "App_Workload"
-            }
-        }
-    }
-
-    $script:ModeStates = @()
-    if ($null -ne $modeResults) {
-        foreach ($prop in $modeResults.PSObject.Properties) {
-            $desc = ""
-            if ($null -ne $modesNode -and $null -ne $modesNode.Value.PSObject.Properties[$prop.Name]) {
-                $modeData = $modesNode.Value.PSObject.Properties[$prop.Name].Value
-                if ($null -ne $modeData.PSObject.Properties["description"]) {
-                    $desc = [string]$modeData.description
-                }
-            }
-            $curr = [string]$prop.Value.Status
-            $script:ModeStates += [pscustomobject]@{
-                Name         = $prop.Name
-                CurrentState = $curr
-                DesiredState = $curr
-                Description  = $desc
-                ProfileType  = "System_Mode"
-            }
-        }
-    }
-
-    $script:HasMultipleModes = ($script:ModeStates.Count -gt 1)
-    $script:SettingsStates = Get-DashboardSettingsRows -Workspaces $workspaces
+    Update-DashboardRuntimeState -Workspaces $workspaces -PnpCache $globalPnpCache
 
     if ($script:WorkloadStates.Count -eq 0 -and $script:ModeStates.Count -eq 0) {
         Write-Host "No profiles found in workspaces.json."
@@ -1127,14 +1770,19 @@ function Start-Dashboard {
     $CurrentTab = Get-FirstTab -HasMultipleModes $script:HasMultipleModes
     $workloadDetailMode = "None"
     $cursorIndex = 0
-    $isRendering = $true
-    $needsRedraw = $true
-    $abortDueToInputUnavailable = $false
+    $commitMode = Get-DashboardCommitModeDefault
     $nameColumnWidth = 42
     $descLineWidth = [Math]::Max(20, (Get-SafeConsoleWidth) - 4)
 
-    while ($isRendering) {
-        $activeStates = if ($CurrentTab -eq 3) { @($script:ComplianceData) } else { Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates }
+    while ($true) {
+        $isRendering = $true
+        $needsRedraw = $true
+        $abortDueToInputUnavailable = $false
+        $commitRequested = $false
+        $pendingActionConfirmId = ""
+
+        while ($isRendering) {
+        $activeStates = if ($CurrentTab -eq 3) { @($script:ComplianceData) } else { Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates }
         if (@($activeStates).Count -eq 0) {
             $cursorIndex = 0
         } elseif ($cursorIndex -ge @($activeStates).Count) {
@@ -1156,10 +1804,21 @@ function Start-Dashboard {
                     Write-Host "   (No items available)" -ForegroundColor DarkGray
                 }
 
-                for ($i = 0; $i -lt @($activeStates).Count; $i++) {
+                $windowStart = 0
+                $windowEnd = @($activeStates).Count - 1
+                if ($CurrentTab -eq 1) {
+                    $windowSize = [Math]::Max(5, (Get-SafeConsoleHeight) - 14)
+                    $viewport = Get-ViewportRange -TotalCount @($activeStates).Count -CursorIndex $cursorIndex -WindowSize $windowSize
+                    $windowStart = [int]$viewport.Start
+                    $windowEnd = [int]$viewport.End
+                }
+
+                for ($i = $windowStart; $i -le $windowEnd; $i++) {
+                    if ($i -lt 0 -or $i -ge @($activeStates).Count) { continue }
                     $state = $activeStates[$i]
                     $prefix = if ($i -eq $cursorIndex) { " > " } else { "   " }
-                    $paddedName = $state.Name.PadRight($nameColumnWidth - 3)
+                    $displayName = if ($CurrentTab -eq 1) { Format-WorkloadDisplayName -WorkloadRow $state } else { [string]$state.Name }
+                    $paddedName = $displayName.PadRight($nameColumnWidth - 3)
                     Write-Host -NoNewline $prefix
                     Write-Host -NoNewline $paddedName -ForegroundColor Cyan
                     Write-Host -NoNewline "|  "
@@ -1211,7 +1870,7 @@ function Start-Dashboard {
                     Write-Host ("").PadRight($descLineWidth)
                 }
                 Write-Host ""
-                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode) -ForegroundColor Gray
+                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode -CommitMode $commitMode) -ForegroundColor Gray
             } elseif ($CurrentTab -eq 3) {
                 Write-Host "Component                      | Physical | Desired | Status"
                 Write-Host "-------------------------------+----------+---------+------------"
@@ -1235,25 +1894,33 @@ function Start-Dashboard {
                     Write-Host ("").PadRight($descLineWidth)
                 }
                 Write-Host ""
-                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode) -ForegroundColor Gray
+                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode -CommitMode $commitMode) -ForegroundColor Gray
             } else {
                 Write-Host ("   {0}" -f "Settings").PadRight($nameColumnWidth)
                 Write-Host "------------------------------------------+-------------------------"
-                if (@($script:SettingsStates).Count -eq 0) {
+                if (@($activeStates).Count -eq 0) {
                     Write-Host "   (No items available)" -ForegroundColor DarkGray
                 }
-                for ($i = 0; $i -lt @($script:SettingsStates).Count; $i++) {
-                    $row = $script:SettingsStates[$i]
+                for ($i = 0; $i -lt @($activeStates).Count; $i++) {
+                    $row = $activeStates[$i]
+                    if (Test-DashboardTab4RowIsSection -Row $row) {
+                        Write-Host ("   {0}" -f [string]$row.Label) -ForegroundColor DarkGray
+                        continue
+                    }
                     $prefix = if ($i -eq $cursorIndex) { " > " } else { "   " }
-                    $pendingMarker = if (Test-DashboardSettingsRowPending -Row $row) { "*" } else { " " }
+                    $pendingMarker = " "
+                    if (Test-DashboardTab4RowIsSetting -Row $row) {
+                        $pendingMarker = if (Test-DashboardSettingsRowPending -Row $row) { "*" } else { " " }
+                    }
                     $settingName = ("{0}{1}" -f $pendingMarker, [string]$row.Key)
                     $paddedName = $settingName.PadRight($nameColumnWidth - 3)
-                    $currentText = [string]$row.CurrentValue
-                    $desiredText = Get-DashboardSettingValueDisplay -Row $row
+                    $currentText = if (Test-DashboardTab4RowIsSetting -Row $row) { [string]$row.CurrentValue } else { "" }
+                    $desiredText = Get-DashboardTab4RowValueDisplay -Row $row -PendingActionConfirmId $pendingActionConfirmId
                     Write-Host -NoNewline $prefix
-                    Write-Host -NoNewline $paddedName -ForegroundColor Cyan
+                    $nameColor = if (Test-DashboardTab4RowIsAction -Row $row) { "Magenta" } else { "Cyan" }
+                    Write-Host -NoNewline $paddedName -ForegroundColor $nameColor
                     Write-Host -NoNewline "|  "
-                    if (Test-DashboardSettingsRowPending -Row $row) {
+                    if ((Test-DashboardTab4RowIsSetting -Row $row) -and (Test-DashboardSettingsRowPending -Row $row)) {
                         Write-Host -NoNewline $currentText -ForegroundColor DarkYellow
                         $currentPadCount = 10 - $currentText.Length
                         if ($currentPadCount -gt 0) { Write-Host -NoNewline (" " * $currentPadCount) }
@@ -1264,15 +1931,15 @@ function Start-Dashboard {
                     }
                 }
                 Write-Host ""
-                if (@($script:SettingsStates).Count -gt 0) {
-                    $selectedSetting = $script:SettingsStates[$cursorIndex]
+                if (@($activeStates).Count -gt 0) {
+                    $selectedSetting = $activeStates[$cursorIndex]
                     $descText = "  {0}  {1}" -f [string]$selectedSetting.Description, [string]$selectedSetting.Example
                     Write-Host ($descText).PadRight($descLineWidth) -ForegroundColor Cyan
                 } else {
                     Write-Host ("").PadRight($descLineWidth)
                 }
                 Write-Host ""
-                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode) -ForegroundColor Gray
+                Write-Host (Get-DashboardFooterText -CurrentTab $CurrentTab -WorkloadDetailMode $workloadDetailMode -CommitMode $commitMode) -ForegroundColor Gray
             }
 
             $needsRedraw = $false
@@ -1297,38 +1964,40 @@ function Start-Dashboard {
             }
 
             switch ($key) {
-                "D1" { $CurrentTab = 1; $cursorIndex = 0; $needsRedraw = $true; continue }
-                "NumPad1" { $CurrentTab = 1; $cursorIndex = 0; $needsRedraw = $true; continue }
+                "D1" { $CurrentTab = 1; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "NumPad1" { $CurrentTab = 1; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
                 "D2" {
                     if ($script:HasMultipleModes) {
-                        $CurrentTab = 2; $cursorIndex = 0; $needsRedraw = $true
+                        $CurrentTab = 2; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true
                     }
                     continue
                 }
                 "NumPad2" {
                     if ($script:HasMultipleModes) {
-                        $CurrentTab = 2; $cursorIndex = 0; $needsRedraw = $true
+                        $CurrentTab = 2; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true
                     }
                     continue
                 }
-                "D3" { $CurrentTab = 3; $cursorIndex = 0; $needsRedraw = $true; continue }
-                "NumPad3" { $CurrentTab = 3; $cursorIndex = 0; $needsRedraw = $true; continue }
-                "D4" { $CurrentTab = 4; $cursorIndex = 0; $needsRedraw = $true; continue }
-                "NumPad4" { $CurrentTab = 4; $cursorIndex = 0; $needsRedraw = $true; continue }
+                "D3" { $CurrentTab = 3; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "NumPad3" { $CurrentTab = 3; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "D4" { $CurrentTab = 4; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "NumPad4" { $CurrentTab = 4; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
                 "UpArrow" {
                     if (($CurrentTab -eq 1 -or $CurrentTab -eq 2 -or $CurrentTab -eq 3 -or $CurrentTab -eq 4) -and $cursorIndex -gt 0) { $cursorIndex-- }
+                    $pendingActionConfirmId = ""
                 }
                 "DownArrow" {
                     if ($CurrentTab -eq 1 -or $CurrentTab -eq 2 -or $CurrentTab -eq 3 -or $CurrentTab -eq 4) {
-                        $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates
+                        $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates
                         if ($CurrentTab -eq 3) { $active = @($script:ComplianceData) }
                         if ($cursorIndex -lt (@($active).Count - 1)) { $cursorIndex++ }
                     }
+                    $pendingActionConfirmId = ""
                 }
                 "Spacebar" {
                     if ($CurrentTab -eq 1 -or $CurrentTab -eq 2) {
                         if ($CurrentTab -eq 1) {
-                            $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates
+                            $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates
                             if (@($active).Count -gt 0) {
                                 $selected = $active[$cursorIndex]
                                 $selected.DesiredState = Update-DashboardDesiredStateOnSpace `
@@ -1352,22 +2021,28 @@ function Start-Dashboard {
                             Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
                         }
                     } elseif ($CurrentTab -eq 4) {
-                        if (@($script:SettingsStates).Count -gt 0) {
-                            $selected = $script:SettingsStates[$cursorIndex]
-                            [void](Update-DashboardSettingsValueOnSpace -Row $selected)
+                        if (@($activeStates).Count -gt 0) {
+                            $selected = $activeStates[$cursorIndex]
+                            if (Test-DashboardTab4RowIsSetting -Row $selected) {
+                                [void](Update-DashboardSettingsValueOnSpace -Row $selected)
+                            }
+                            $pendingActionConfirmId = ""
                         }
                     }
                 }
                 "LeftArrow" {
-                    if ($CurrentTab -eq 4 -and @($script:SettingsStates).Count -gt 0) {
-                        $selected = $script:SettingsStates[$cursorIndex]
-                        [void](Update-DashboardSettingsNumericValue -Row $selected -Delta -1)
+                    if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
+                        $selected = $activeStates[$cursorIndex]
+                        if (Test-DashboardTab4RowIsSetting -Row $selected) {
+                            [void](Update-DashboardSettingsNumericValue -Row $selected -Delta -1)
+                        }
+                        $pendingActionConfirmId = ""
                     }
                 }
                 "RightArrow" {
-                    if ($CurrentTab -eq 4 -and @($script:SettingsStates).Count -gt 0) {
-                        $selected = $script:SettingsStates[$cursorIndex]
-                        if ($selected.Type -eq "string" -or $selected.Type -eq "int") {
+                    if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
+                        $selected = $activeStates[$cursorIndex]
+                        if ((Test-DashboardTab4RowIsSetting -Row $selected) -and ($selected.Type -eq "string" -or $selected.Type -eq "int")) {
                             try {
                                 Invoke-SafeClearHost
                                 Write-Host "=== WORKSPACEMANAGER SETTINGS ==="
@@ -1390,23 +2065,66 @@ function Start-Dashboard {
                                 # Keep dashboard responsive if prompt host is unavailable.
                             }
                         }
+                        $pendingActionConfirmId = ""
                     }
                 }
                 "Add" {
-                    if ($CurrentTab -eq 4 -and @($script:SettingsStates).Count -gt 0) {
-                        $selected = $script:SettingsStates[$cursorIndex]
-                        [void](Update-DashboardSettingsNumericValue -Row $selected -Delta 1)
+                    if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
+                        $selected = $activeStates[$cursorIndex]
+                        if (Test-DashboardTab4RowIsSetting -Row $selected) {
+                            [void](Update-DashboardSettingsNumericValue -Row $selected -Delta 1)
+                        }
+                        $pendingActionConfirmId = ""
                     }
                 }
                 "Subtract" {
-                    if ($CurrentTab -eq 4 -and @($script:SettingsStates).Count -gt 0) {
-                        $selected = $script:SettingsStates[$cursorIndex]
-                        [void](Update-DashboardSettingsNumericValue -Row $selected -Delta -1)
+                    if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
+                        $selected = $activeStates[$cursorIndex]
+                        if (Test-DashboardTab4RowIsSetting -Row $selected) {
+                            [void](Update-DashboardSettingsNumericValue -Row $selected -Delta -1)
+                        }
+                        $pendingActionConfirmId = ""
                     }
                 }
                 "Oem3" {
                     $detailUpdate = Update-WorkloadDetailModeForKey -CurrentTab $CurrentTab -CurrentMode $workloadDetailMode -Key "Oem3"
                     $workloadDetailMode = [string]$detailUpdate.Mode
+                }
+                "Oem2" {
+                    if ($CurrentTab -eq 1) {
+                        try {
+                            Invoke-SafeClearHost
+                            Write-Host "=== WORKSPACEMANAGER WORKLOAD SEARCH ==="
+                            Write-Host ""
+                            Write-Host "Filter by workload name, domain, alias, or tag." -ForegroundColor DarkGray
+                            Write-Host "Enter = apply, Esc = cancel." -ForegroundColor DarkGray
+                            $searchInput = Read-DashboardLineWithEscCancel -PromptText "Search"
+                            if (-not [bool]$searchInput.Cancelled) {
+                                $script:WorkloadFilterState.Query = [string]$searchInput.Text
+                                $cursorIndex = 0
+                            }
+                        } catch {
+                            # host may not support raw input in some contexts
+                        }
+                    }
+                }
+                "G" {
+                    if ($CurrentTab -eq 1) {
+                        Update-WorkloadDomainFilter -WorkloadStates $script:WorkloadStates -FilterState $script:WorkloadFilterState
+                        $cursorIndex = 0
+                    }
+                }
+                "F" {
+                    if ($CurrentTab -eq 1) {
+                        $script:WorkloadFilterState.FavoritesOnly = -not [bool]$script:WorkloadFilterState.FavoritesOnly
+                        $cursorIndex = 0
+                    }
+                }
+                "M" {
+                    if ($CurrentTab -eq 1) {
+                        $script:WorkloadFilterState.MixedOnly = -not [bool]$script:WorkloadFilterState.MixedOnly
+                        $cursorIndex = 0
+                    }
                 }
                 "A" {
                     if ($CurrentTab -eq 2) {
@@ -1420,12 +2138,66 @@ function Start-Dashboard {
                         Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
                     }
                 }
+                "R" {
+                    $commitMode = Toggle-DashboardCommitMode -CurrentMode $commitMode
+                }
                 "Escape" {
                     Invoke-SafeClearHost
                     Write-Host "Cancelled."
                     exit
                 }
                 "Enter" {
+                    if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
+                        $selected = $activeStates[$cursorIndex]
+                        if (Test-DashboardTab4RowIsAction -Row $selected) {
+                            $decision = Resolve-DashboardActionEnterDecision -Row $selected -PendingActionConfirmId $pendingActionConfirmId -SettingsRows $script:SettingsStates
+                            if ($decision.Decision -eq "ArmAction") {
+                                $pendingActionConfirmId = [string]$decision.NextPendingActionId
+                                $needsRedraw = $true
+                                continue
+                            }
+                            if ($decision.Decision -eq "BlockedByPendingSettings") {
+                                Invoke-SafeClearHost
+                                Write-Host "=== WORKSPACEMANAGER ACTION BLOCKED ==="
+                                Write-Host ""
+                                Write-Host $decision.Message -ForegroundColor Yellow
+                                Write-Host ""
+                                Write-Host "Press any key to continue..." -ForegroundColor DarkGray
+                                [Console]::ReadKey($true) | Out-Null
+                                $pendingActionConfirmId = ""
+                                $needsRedraw = $true
+                                continue
+                            }
+                            if ($decision.Decision -eq "ExecuteAction") {
+                                $orchestratorPath = Join-Path -Path $PSScriptRoot -ChildPath "Orchestrator.ps1"
+                                Invoke-SafeClearHost
+                                Write-Host "=== WORKSPACEMANAGER ACTION ==="
+                                Write-Host ""
+                                Write-Host ("Running action: {0}" -f [string]$selected.Key) -ForegroundColor Cyan
+                                try {
+                                    $actionResult = Invoke-DashboardActionById `
+                                        -ActionId ([string]$selected.ActionId) `
+                                        -SettingsRows $script:SettingsStates `
+                                        -JsonPath $jsonPath `
+                                        -Workspaces $workspaces `
+                                        -PendingHardwareChanges $script:PendingHardwareChanges `
+                                        -OrchestratorPath $orchestratorPath
+                                    Write-Host ("[ SUCCESS ] {0}" -f [string]$actionResult.Message) -ForegroundColor Green
+                                } catch {
+                                    Write-Host ("[ ERROR ] {0}" -f $_.Exception.Message) -ForegroundColor Red
+                                }
+                                Write-Host ""
+                                Write-Host "Reloading dashboard state..." -ForegroundColor DarkGray
+                                $pendingActionConfirmId = ""
+                                $workspaces = Get-Content -Path $jsonPath -Raw -Encoding utf8 | ConvertFrom-Json
+                                Update-DashboardRuntimeState -Workspaces $workspaces -PnpCache $globalPnpCache
+                                $cursorIndex = 0
+                                $needsRedraw = $true
+                                continue
+                            }
+                        }
+                    }
+                    $commitRequested = $true
                     $isRendering = $false
                     break
                 }
@@ -1436,34 +2208,44 @@ function Start-Dashboard {
         }
     }
 
-    if ($abortDueToInputUnavailable) {
-        exit 1
-    }
-
-    Invoke-SafeClearHost
-    Write-Host "Committing state changes..."
-    $OrchestratorPath = Join-Path -Path $PSScriptRoot -ChildPath "Orchestrator.ps1"
-    Save-DashboardStateMemory -ModeStates $script:ModeStates -StateFilePath $stateFilePath
-
-    $pendingStates = @(Get-DashboardPendingCommitStates -WorkloadStates $script:WorkloadStates -PendingHardwareChanges $script:PendingHardwareChanges)
-    Invoke-DashboardCommit -PendingStates $pendingStates -PendingHardwareChanges $script:PendingHardwareChanges -OrchestratorPath $OrchestratorPath -JsonPath $jsonPath -Workspaces $workspaces -SettingsRows $script:SettingsStates
-
-    $pendingMessages = @(Get-DashboardPostCommitMessages -UIStates @($pendingStates) -Workspaces $workspaces)
-    if ($pendingMessages.Count -gt 0) {
-        Write-Host ""
-        Write-Host "=== REQUIRED ACTIONS ===" -ForegroundColor Yellow
-        foreach ($msg in $pendingMessages) {
-            Write-Host $msg -ForegroundColor Cyan
+        if ($abortDueToInputUnavailable) {
+            exit 1
         }
-        Write-Host ""
-        Write-Host "Press any key to exit..." -ForegroundColor White
-        [Console]::ReadKey($true) | Out-Null
-        exit
-    }
 
-    Write-Host "[ SUCCESS ] Workspaces updated."
-    Start-Sleep -Seconds 2
-    exit
+        if (-not $commitRequested) {
+            continue
+        }
+
+        $OrchestratorPath = Join-Path -Path $PSScriptRoot -ChildPath "Orchestrator.ps1"
+        $postCommitAction = Invoke-DashboardCommitFlow `
+            -WorkloadStates $script:WorkloadStates `
+            -ModeStates $script:ModeStates `
+            -PendingHardwareChanges $script:PendingHardwareChanges `
+            -OrchestratorPath $OrchestratorPath `
+            -StateFilePath $stateFilePath `
+            -JsonPath $jsonPath `
+            -Workspaces $workspaces `
+            -SettingsRows $script:SettingsStates `
+            -CommitMode $commitMode
+
+        if ($postCommitAction -eq "Exit") {
+            exit
+        }
+
+        $workspaces = Get-Content -Path $jsonPath -Raw -Encoding utf8 | ConvertFrom-Json
+        Update-DashboardRuntimeState -Workspaces $workspaces -PnpCache $globalPnpCache
+        if ($script:WorkloadStates.Count -eq 0 -and $script:ModeStates.Count -eq 0) {
+            Write-Host "No profiles found in workspaces.json."
+            exit
+        }
+        if (-not $script:HasMultipleModes -and $CurrentTab -eq 2) {
+            $CurrentTab = 1
+        }
+        if ($CurrentTab -lt 1 -or $CurrentTab -gt 4) {
+            $CurrentTab = Get-FirstTab -HasMultipleModes $script:HasMultipleModes
+        }
+        $cursorIndex = 0
+    }
 }
 
 if ($MyInvocation.InvocationName -ne ".") {

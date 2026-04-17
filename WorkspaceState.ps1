@@ -182,6 +182,58 @@ function Get-HardwarePhysicalState {
     }
 }
 
+function Get-AppWorkloadEntries {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$AppWorkloads
+    )
+
+    $entries = [System.Collections.Generic.List[object]]::new()
+    if ($null -eq $AppWorkloads) {
+        return @()
+    }
+
+    $domainProps = @($AppWorkloads.PSObject.Properties | Sort-Object Name)
+    foreach ($domainProp in $domainProps) {
+        $domainName = [string]$domainProp.Name
+        $domainValue = $domainProp.Value
+        if ($null -eq $domainValue) { continue }
+
+        foreach ($workloadProp in @($domainValue.PSObject.Properties)) {
+            $workloadName = [string]$workloadProp.Name
+            $workload = $workloadProp.Value
+            if ($null -eq $workload) { continue }
+
+            $priorityRaw = $null
+            if ($null -ne $workload.PSObject.Properties["priority"]) {
+                $priorityRaw = $workload.priority
+            }
+            $priority = 9999
+            if ($null -ne $priorityRaw) {
+                $parsed = 0
+                if ([int]::TryParse([string]$priorityRaw, [ref]$parsed)) {
+                    $priority = $parsed
+                }
+            }
+
+            $entries.Add([pscustomobject]@{
+                Name     = $workloadName
+                Domain   = $domainName
+                Priority = $priority
+                Workload = $workload
+            })
+        }
+    }
+
+    return @(
+        $entries |
+            Sort-Object -Property `
+                @{ Expression = { [int]$_.Priority }; Ascending = $true }, `
+                @{ Expression = { [string]$_.Name }; Ascending = $true }
+    )
+}
+
 function Get-WorkspaceState {
     [CmdletBinding()]
     param(
@@ -210,9 +262,9 @@ function Get-WorkspaceState {
     }
 
     $appWorkloadResults = @{}
-    foreach ($workloadProp in $appWorkloads.PSObject.Properties) {
-        $workloadName = $workloadProp.Name
-        $workload = $workloadProp.Value
+    foreach ($entry in @(Get-AppWorkloadEntries -AppWorkloads $appWorkloads)) {
+        $workloadName = [string]$entry.Name
+        $workload = $entry.Workload
         $totalChecks = 0
         $matchedChecks = 0
         $serviceDetails = @()
@@ -252,6 +304,12 @@ function Get-WorkspaceState {
             Status        = Get-RunningStatusFromCounts -Matched $matchedChecks -Total $totalChecks
             MatchedChecks = $matchedChecks
             TotalChecks   = $totalChecks
+            Domain        = [string]$entry.Domain
+            Tags          = @($workload.tags | ForEach-Object { [string]$_ })
+            Priority      = [int]$entry.Priority
+            Favorite      = ($workload.favorite -eq $true)
+            Hidden        = ($workload.hidden -eq $true)
+            Aliases       = @($workload.aliases | ForEach-Object { [string]$_ })
             RuntimeDetails = [pscustomobject]@{
                 Services      = @($serviceDetails)
                 Executables   = @($executableDetails)

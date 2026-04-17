@@ -22,7 +22,7 @@ Standard "debloat" scripts are blunt instruments that break core OS functionalit
 * **Race-Condition Immunity:** Inject explicit millisecond delays (`t 3000`) between sequential service starts to ensure background dependencies are fully initialized before GUI applications launch.
 * **Zombie Process Handling:** Teardown sequences feature built-in timeouts to catch silently crashed applications and prevent system locks.
 * **Protected Processes:** Define critical executables that halt the teardown sequence if detected in RAM, completely preventing accidental data loss.
-* **Headless & Dashboard Modes:** Run silently via Start Menu shortcuts (perfect for PowerToys Run), or manage state interactively via the PowerShell TUI Dashboard (`Dashboard.ps1`). In the main list, **Space** toggles desired Start/Stop (for **Mixed** current state, only `Ready`/`Stopped`), and **Backspace** clears pending changes; see [Configuration Schema & Syntax Rules](DOCs/CONFIGURATION.md#11-workspace-type-type).
+* **Headless & Dashboard Modes:** Run silently via Start Menu shortcuts (perfect for PowerToys Run), or manage state interactively via the PowerShell TUI Dashboard (`Dashboard.ps1`). In the main list, **Space** toggles desired Start/Stop (for **Mixed** current state, only `Ready`/`Stopped`), and **Backspace** clears pending changes. Dashboard commit mode can be toggled with **R** between `CommitMode: Exit` (current behavior) and `CommitMode: Return` (commit and return to UI); see [Configuration Schema & Syntax Rules](DOCs/CONFIGURATION.md#11-workspace-type-type).
 * **Zero External Dependencies:** Built entirely in native PowerShell 7. No background agents, no electron wrappers, no telemetry.
 
 ## 🚀 Prerequisites
@@ -81,6 +81,7 @@ gsudo pwsh -File Orchestrator.ps1 -WorkspaceName "Audio_Production" -Action "Sta
 For advanced configuration, edge-case mitigation, and TDD contribution guidelines, please refer to the official documentation:
 
   * [Configuration Schema & Syntax Rules](SCHEMA.md)
+  * [Dashboard & App Workloads UX](DOCs/DASHBOARD.md)
   * [Edge Cases & Mitigation Strategies](https://www.google.com/search?q=EDGE_CASES.md)
   * [Contributing & Testing (Pester)](https://www.google.com/search?q=CONTRIBUTING.md)
 

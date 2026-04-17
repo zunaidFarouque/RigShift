@@ -70,8 +70,8 @@ function Resolve-InterceptedWorkload {
     )
 
     $targetLeaf = [System.IO.Path]::GetFileName($TargetExe)
-    foreach ($prop in $Workspaces.App_Workloads.PSObject.Properties) {
-        $workload = $prop.Value
+    foreach ($entry in @(Get-AppWorkloadEntries -AppWorkloads $Workspaces.App_Workloads)) {
+        $workload = $entry.Workload
         $interceptsProp = $workload.PSObject.Properties["intercepts"]
         if ($null -eq $interceptsProp) { continue }
 
@@ -133,7 +133,7 @@ function Resolve-InterceptedWorkload {
             }
 
             return [pscustomobject]@{
-                Name                 = [string]$prop.Name
+                Name                 = [string]$entry.Name
                 Workload             = $workload
                 RequiredServices     = @($requiredServices)
                 RequiredExecutables  = @($requiredExecutables)
@@ -142,6 +142,32 @@ function Resolve-InterceptedWorkload {
     }
 
     return $null
+}
+
+function Get-AppWorkloadEntries {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$AppWorkloads
+    )
+
+    if ($null -eq $AppWorkloads) {
+        return @()
+    }
+
+    $entries = [System.Collections.Generic.List[object]]::new()
+    foreach ($domainProp in @($AppWorkloads.PSObject.Properties)) {
+        if ($null -eq $domainProp.Value) { continue }
+        foreach ($workloadProp in @($domainProp.Value.PSObject.Properties)) {
+            if ($null -eq $workloadProp.Value) { continue }
+            $entries.Add([pscustomobject]@{
+                Domain   = [string]$domainProp.Name
+                Name     = [string]$workloadProp.Name
+                Workload = $workloadProp.Value
+            })
+        }
+    }
+    return @($entries)
 }
 
 function Test-InterceptorRuleActive {
@@ -481,7 +507,15 @@ function Start-InterceptedApplication {
         [string[]]$TargetArgs = @()
     )
 
-    if ($null -eq $TargetArgs -or $TargetArgs.Count -eq 0) {
+    $sanitizedArgs = @()
+    foreach ($arg in @($TargetArgs)) {
+        if ($null -eq $arg) { continue }
+        $argText = [string]$arg
+        if ([string]::IsNullOrWhiteSpace($argText)) { continue }
+        $sanitizedArgs += $argText
+    }
+
+    if ($sanitizedArgs.Count -eq 0) {
         Invoke-WithManagedIfeoTemporarilyDisabled -TargetExe $TargetExe -LaunchBlock {
             Start-Process -FilePath $TargetExe | Out-Null
         }
@@ -489,7 +523,18 @@ function Start-InterceptedApplication {
     }
 
     Invoke-WithManagedIfeoTemporarilyDisabled -TargetExe $TargetExe -LaunchBlock {
-        Start-Process -FilePath $TargetExe -ArgumentList $TargetArgs | Out-Null
+        $quotedArgs = @()
+        foreach ($arg in @($sanitizedArgs)) {
+            $argText = [string]$arg
+            if ($argText -match '^[/-]') {
+                $quotedArgs += $argText
+            } else {
+                $escapedArg = $argText.Replace('"', '\"')
+                $quotedArgs += ('"{0}"' -f $escapedArg)
+            }
+        }
+        $argumentLine = ($quotedArgs -join " ")
+        Start-Process -FilePath $TargetExe -ArgumentList $argumentLine | Out-Null
     }
 }
 

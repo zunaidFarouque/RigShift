@@ -65,9 +65,16 @@ Describe "Workspace State Engine (Declarative Matrix)" {
                 }
             }
             App_Workloads = [pscustomobject]@{
-                DAW_Cubase = [pscustomobject]@{
-                    services = @("Audiosrv")
-                    executables = @("'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe'")
+                Audio = [pscustomobject]@{
+                    DAW_Cubase = [pscustomobject]@{
+                        services = @("Audiosrv")
+                        executables = @("'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe'")
+                        tags = @("audio", "daw")
+                        priority = 10
+                        favorite = $true
+                        hidden = $false
+                        aliases = @("Cubase")
+                    }
                 }
             }
         }
@@ -97,6 +104,11 @@ Describe "Workspace State Engine (Declarative Matrix)" {
         $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Services[0].IsRunning | Should -BeTrue
         $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Executables[0].DisplayName | Should -Be "Cubase12.exe"
         $state.AppWorkloads.DAW_Cubase.RuntimeDetails.Executables[0].IsRunning | Should -BeTrue
+        $state.AppWorkloads.DAW_Cubase.Domain | Should -Be "Audio"
+        @($state.AppWorkloads.DAW_Cubase.Tags).Count | Should -Be 2
+        $state.AppWorkloads.DAW_Cubase.Favorite | Should -BeTrue
+        $state.AppWorkloads.DAW_Cubase.Hidden | Should -BeFalse
+        @($state.AppWorkloads.DAW_Cubase.Aliases).Count | Should -Be 1
     }
 
     It "captures mixed runtime details for workloads with partial matches" {
@@ -123,9 +135,16 @@ Describe "Workspace State Engine (Declarative Matrix)" {
 
     It "provides stable empty runtime details when workload has no checks" {
         $script:config.App_Workloads = [pscustomobject]@{
-            Empty_Workload = [pscustomobject]@{
-                services = @()
-                executables = @()
+            General = [pscustomobject]@{
+                Empty_Workload = [pscustomobject]@{
+                    services = @()
+                    executables = @()
+                    tags = @()
+                    priority = 5
+                    favorite = $false
+                    hidden = $false
+                    aliases = @()
+                }
             }
         }
         Mock -CommandName Get-Service -MockWith { $null }
@@ -220,5 +239,25 @@ Describe "Workspace State Engine (Declarative Matrix)" {
         (Test-Path -Path $script:statePath) | Should -BeTrue
         $saved = Get-Content -Path $script:statePath -Raw -Encoding utf8 | ConvertFrom-Json
         $saved.PSObject.Properties.Name -contains "Active_System_Mode" | Should -BeTrue
+    }
+
+    It "sorts grouped workloads by priority then name" {
+        $script:config.App_Workloads = [pscustomobject]@{
+            Dev = [pscustomobject]@{
+                Zeta = [pscustomobject]@{ services = @(); executables = @(); priority = 30; tags = @(); aliases = @(); favorite = $false; hidden = $false }
+                Alpha = [pscustomobject]@{ services = @(); executables = @(); priority = 10; tags = @(); aliases = @(); favorite = $false; hidden = $false }
+            }
+            Audio = [pscustomobject]@{
+                Beta = [pscustomobject]@{ services = @(); executables = @(); priority = 10; tags = @(); aliases = @(); favorite = $false; hidden = $false }
+            }
+        }
+        Mock -CommandName Get-Service -MockWith { $null }
+        Mock -CommandName Get-Process -MockWith { $null }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "Power Scheme GUID: 9999  (Power saver)" }
+        Mock -CommandName Get-CimInstance -MockWith { $null }
+
+        $state = Get-WorkspaceState -Workspace $script:config
+        @($state.AppWorkloads.PSObject.Properties.Name) | Should -Be @("Alpha", "Beta", "Zeta")
     }
 }

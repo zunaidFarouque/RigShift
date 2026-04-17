@@ -8,7 +8,9 @@ param(
     [string]$Action,
 
     [ValidateSet("App_Workload", "System_Mode", "Hardware_Override")]
-    [string]$ProfileType
+    [string]$ProfileType,
+
+    [switch]$SkipInterceptorSync
 )
 
 Set-StrictMode -Version Latest
@@ -333,6 +335,8 @@ function Sync-Interceptors {
     )
 
     $ifeoRoot = $script:IfeoRegistryRoot
+    $ownerTag = "BG-Services-Orchestrator"
+    $versionTag = "1"
     if (-not $Enabled) {
         $removedCount = 0
         $existingKeys = @(Get-ChildItem -Path $ifeoRoot -ErrorAction SilentlyContinue)
@@ -341,9 +345,16 @@ function Sync-Interceptors {
             if ($null -eq $managed -or [string]$managed.WorkspaceManager_Managed -ne "1") {
                 continue
             }
+            $owner = Get-ItemProperty -Path $key.PSPath -Name "WorkspaceManager_Owner" -ErrorAction SilentlyContinue
+            if ($null -ne $owner -and
+                $null -ne $owner.PSObject.Properties["WorkspaceManager_Owner"] -and
+                -not [string]::IsNullOrWhiteSpace([string]$owner.WorkspaceManager_Owner) -and
+                [string]$owner.WorkspaceManager_Owner -ne $ownerTag) {
+                continue
+            }
 
             $escapedPath = ($ifeoRoot + "\" + $key.PSChildName).Replace('"', '""')
-            Invoke-ElevatedPowerShell -Command "Remove-ItemProperty -Path `"$escapedPath`" -Name `"Debugger`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_Managed`" -ErrorAction SilentlyContinue"
+            Invoke-ElevatedPowerShell -Command "Remove-ItemProperty -Path `"$escapedPath`" -Name `"Debugger`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_Managed`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_Owner`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_InterceptorVersion`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_LastSyncedUtc`" -ErrorAction SilentlyContinue"
             $removedCount++
         }
         return [pscustomobject]@{
@@ -358,11 +369,11 @@ function Sync-Interceptors {
     $wrapperPath = [System.IO.Path]::GetFullPath($wrapperPath)
     $debuggerValue = ('wscript.exe "{0}"' -f $wrapperPath).Replace('"', '`"')
 
-    foreach ($workloadProp in $Workspaces.App_Workloads.PSObject.Properties) {
-        $interceptsProp = $workloadProp.Value.PSObject.Properties["intercepts"]
+    foreach ($entry in @(Get-AppWorkloadEntries -AppWorkloads $Workspaces.App_Workloads)) {
+        $interceptsProp = $entry.Workload.PSObject.Properties["intercepts"]
         if ($null -eq $interceptsProp) { continue }
 
-        foreach ($intercept in @($workloadProp.Value.intercepts)) {
+        foreach ($intercept in @($entry.Workload.intercepts)) {
             # Support legacy string intercepts and new intercept-rule objects.
             $exeNames = @()
             if ($intercept -is [string]) {
@@ -383,10 +394,14 @@ function Sync-Interceptors {
                 if ([string]::IsNullOrWhiteSpace($exeName)) { continue }
 
                 $ifeoPath = ($ifeoRoot + "\" + $exeName).Replace('"', '""')
+                $syncStamp = [DateTime]::UtcNow.ToString("o")
                 $command = @"
 New-Item -Path "$ifeoPath" -Force | Out-Null
 New-ItemProperty -Path "$ifeoPath" -Name "Debugger" -Value "$debuggerValue" -PropertyType String -Force | Out-Null
 New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_Managed" -Value "1" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_Owner" -Value "$ownerTag" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_InterceptorVersion" -Value "$versionTag" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_LastSyncedUtc" -Value "$syncStamp" -PropertyType String -Force | Out-Null
 "@
                 Invoke-ElevatedPowerShell -Command $command
                 $addedCount++
@@ -401,6 +416,41 @@ New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_Managed" -Value "1" -
     }
 }
 
+function Get-AppWorkloadEntries {
+    [CmdletBinding()]
+    param([psobject]$AppWorkloads)
+
+    if ($null -eq $AppWorkloads) { return @() }
+    $entries = [System.Collections.Generic.List[object]]::new()
+    foreach ($domainProp in @($AppWorkloads.PSObject.Properties)) {
+        if ($null -eq $domainProp.Value) { continue }
+        foreach ($workloadProp in @($domainProp.Value.PSObject.Properties)) {
+            if ($null -eq $workloadProp.Value) { continue }
+            $entries.Add([pscustomobject]@{
+                Domain   = [string]$domainProp.Name
+                Name     = [string]$workloadProp.Name
+                Workload = $workloadProp.Value
+            })
+        }
+    }
+    return @($entries)
+}
+
+function Resolve-AppWorkloadByName {
+    [CmdletBinding()]
+    param(
+        [psobject]$AppWorkloads,
+        [string]$WorkloadName
+    )
+
+    foreach ($entry in @(Get-AppWorkloadEntries -AppWorkloads $AppWorkloads)) {
+        if ([string]$entry.Name -eq $WorkloadName) {
+            return $entry.Workload
+        }
+    }
+    return $null
+}
+
 # Phase 1 routing: resolve profile type and data
 $resolvedProfileType = $null
 $resolvedProfileData = $null
@@ -408,7 +458,7 @@ $systemModesProperty = $workspaces.PSObject.Properties["System_Modes"]
 $appWorkloadsProperty = $workspaces.PSObject.Properties["App_Workloads"]
 $hardwareDefsProperty = $workspaces.PSObject.Properties["Hardware_Definitions"]
 
-if ($null -ne $configProperty) {
+if ($null -ne $configProperty -and -not $SkipInterceptorSync.IsPresent) {
     $interceptorSync = Sync-Interceptors -Workspaces $workspaces -Enabled:$enableInterceptors
     if ($null -ne $interceptorSync) {
         if ($interceptorSync.Enabled) {
@@ -433,20 +483,27 @@ if (-not [string]::IsNullOrWhiteSpace($ProfileType)) {
         $resolvedProfileType = "System_Mode"
         $resolvedProfileData = $systemModesProperty.Value.PSObject.Properties[$WorkspaceName].Value
     } elseif ($ProfileType -eq "App_Workload") {
-        if ($null -eq $appWorkloadsProperty -or $null -eq $appWorkloadsProperty.Value.PSObject.Properties[$WorkspaceName]) {
+        $resolvedAppWorkload = Resolve-AppWorkloadByName -AppWorkloads $appWorkloadsProperty.Value -WorkloadName $WorkspaceName
+        if ($null -eq $appWorkloadsProperty -or $null -eq $resolvedAppWorkload) {
             throw "Fatal: Workspace '$WorkspaceName' not defined under App_Workloads in workspaces.json."
         }
         $resolvedProfileType = "App_Workload"
-        $resolvedProfileData = $appWorkloadsProperty.Value.PSObject.Properties[$WorkspaceName].Value
+        $resolvedProfileData = $resolvedAppWorkload
     }
 } elseif ($null -ne $systemModesProperty -and $null -ne $systemModesProperty.Value.PSObject.Properties[$WorkspaceName]) {
     $resolvedProfileType = "System_Mode"
     $resolvedProfileData = $systemModesProperty.Value.PSObject.Properties[$WorkspaceName].Value
-} elseif ($null -ne $appWorkloadsProperty -and $null -ne $appWorkloadsProperty.Value.PSObject.Properties[$WorkspaceName]) {
-    $resolvedProfileType = "App_Workload"
-    $resolvedProfileData = $appWorkloadsProperty.Value.PSObject.Properties[$WorkspaceName].Value
 } else {
-    throw "Fatal: Workspace '$WorkspaceName' not defined in workspaces.json."
+    $resolvedAppWorkload = $null
+    if ($null -ne $appWorkloadsProperty) {
+        $resolvedAppWorkload = Resolve-AppWorkloadByName -AppWorkloads $appWorkloadsProperty.Value -WorkloadName $WorkspaceName
+    }
+    if ($null -ne $resolvedAppWorkload) {
+    $resolvedProfileType = "App_Workload"
+        $resolvedProfileData = $resolvedAppWorkload
+    } else {
+        throw "Fatal: Workspace '$WorkspaceName' not defined in workspaces.json."
+    }
 }
 
 # Phase 3/4 execution

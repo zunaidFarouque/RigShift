@@ -37,9 +37,11 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
   "Hardware_Definitions": {},
   "System_Modes": {},
   "App_Workloads": {
-    "Audio_Production": {
-      "services": ["Audiosrv"],
-      "executables": ["'C:/Program Files/Test App/App.exe' --hidden"]
+    "Audio": {
+      "Audio_Production": {
+        "services": ["Audiosrv"],
+        "executables": ["'C:/Program Files/Test App/App.exe' --hidden"]
+      }
     }
   }
 }
@@ -257,6 +259,31 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
     }
 
+    It "skips interceptor sync when SkipInterceptorSync is provided" {
+        @'
+{
+  "_config": {
+    "enable_interceptors": true
+  },
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {}
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Process -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "__MISSING__" -Action "Start" -SkipInterceptorSync | Out-Null } | Should -Throw "Fatal: Workspace '__MISSING__' not defined in workspaces.json."
+
+        $global:gsudoCalls.Count | Should -Be 0
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
     It "syncs managed IFEO debugger hooks when interceptors are enabled" {
 @'
 {
@@ -266,22 +293,26 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
   "Hardware_Definitions": {},
   "System_Modes": {},
   "App_Workloads": {
-    "DAW_Cubase": {
-      "services": ["Audiosrv"],
-      "executables": ["'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe'"]
+    "Audio": {
+      "DAW_Cubase": {
+        "services": ["Audiosrv"],
+        "executables": ["'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe'"]
+      }
     },
     "Office": {
-      "services": ["ClickToRunSvc"],
-      "executables": ["'C:/Program Files/Microsoft OneDrive/OneDrive.exe'"],
-      "intercepts": [
-        {
-          "exe": ["WINWORD.EXE", "EXCEL.EXE"],
-          "requires": {
-            "services": ["ClickToRunSvc"],
-            "executables": []
+      "Office": {
+        "services": ["ClickToRunSvc"],
+        "executables": ["'C:/Program Files/Microsoft OneDrive/OneDrive.exe'"],
+        "intercepts": [
+          {
+            "exe": ["WINWORD.EXE", "EXCEL.EXE"],
+            "requires": {
+              "services": ["ClickToRunSvc"],
+              "executables": []
+            }
           }
-        }
-      ]
+        ]
+      }
     }
   }
 }
@@ -310,6 +341,9 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         (@($decodedCalls | Where-Object { $_ -match 'New-Item -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "Debugger"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Managed" -Value "1"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Owner" -Value "BG-Services-Orchestrator"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_InterceptorVersion" -Value "1"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_LastSyncedUtc"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'Image File Execution Options\\EXCEL\.EXE' })).Count | Should -BeGreaterThan 0
 
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
@@ -340,9 +374,15 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
             )
         }
         Mock -CommandName Get-ItemProperty -MockWith {
-            param([string]$Path)
+            param([string]$Path, [string]$Name)
             if ($Path -match 'WINWORD\.EXE$') {
-                return [pscustomobject]@{ WorkspaceManager_Managed = "1" }
+                if ($Name -eq "WorkspaceManager_Managed") {
+                    return [pscustomobject]@{ WorkspaceManager_Managed = "1" }
+                }
+                if ($Name -eq "WorkspaceManager_Owner") {
+                    return [pscustomobject]@{ WorkspaceManager_Owner = "BG-Services-Orchestrator" }
+                }
+                return [pscustomobject]@{}
             }
             return [pscustomobject]@{}
         }
@@ -359,8 +399,100 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
 
         (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "Debugger"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Managed"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Owner"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_InterceptorVersion"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_LastSyncedUtc"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'notepad\.exe' })).Count | Should -Be 0
 
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "removes managed legacy hooks even when owner metadata is missing" {
+@'
+{
+  "_config": {
+    "enable_interceptors": false
+  },
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {}
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-ChildItem -MockWith {
+            @([pscustomobject]@{ PSChildName = "EXCEL.EXE"; PSPath = "Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\EXCEL.EXE" })
+        }
+        Mock -CommandName Get-ItemProperty -MockWith {
+            param([string]$Path, [string]$Name)
+            if ($Name -eq "WorkspaceManager_Managed") {
+                return [pscustomobject]@{ WorkspaceManager_Managed = "1" }
+            }
+            return $null
+        }
+
+        { & $script:scriptPath -WorkspaceName "MissingTarget" -Action "Start" } | Should -Throw
+
+        $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match '^-?powershell -NoProfile -EncodedCommand ' -or $_ -match '^powershell -NoProfile -EncodedCommand ' })
+        $decodedCalls = @(
+            foreach ($call in $encodedCalls) {
+                $encodedValue = ([regex]::Match($call, '-EncodedCommand\s+(\S+)')).Groups[1].Value
+                [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedValue))
+            }
+        )
+
+        (@($decodedCalls | Where-Object { $_ -match 'Image File Execution Options\\EXCEL\.EXE' })).Count | Should -Be 1
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "does not remove managed hooks owned by a different owner tag" {
+@'
+{
+  "_config": {
+    "enable_interceptors": false
+  },
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {}
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Get-ChildItem -MockWith {
+            @([pscustomobject]@{ PSChildName = "POWERPNT.EXE"; PSPath = "Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\POWERPNT.EXE" })
+        }
+        Mock -CommandName Get-ItemProperty -MockWith {
+            param([string]$Path, [string]$Name)
+            if ($Name -eq "WorkspaceManager_Managed") {
+                return [pscustomobject]@{ WorkspaceManager_Managed = "1" }
+            }
+            if ($Name -eq "WorkspaceManager_Owner") {
+                return [pscustomobject]@{ WorkspaceManager_Owner = "AnotherOwner" }
+            }
+            return $null
+        }
+
+        { & $script:scriptPath -WorkspaceName "MissingTarget" -Action "Start" } | Should -Throw
+
+        $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match '^-?powershell -NoProfile -EncodedCommand ' -or $_ -match '^powershell -NoProfile -EncodedCommand ' })
+        $decodedCalls = @(
+            foreach ($call in $encodedCalls) {
+                $encodedValue = ([regex]::Match($call, '-EncodedCommand\s+(\S+)')).Groups[1].Value
+                [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedValue))
+            }
+        )
+
+        (@($decodedCalls | Where-Object { $_ -match 'Image File Execution Options\\POWERPNT\.EXE' })).Count | Should -Be 0
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
     }
 }

@@ -319,10 +319,13 @@ Describe "Dashboard Tab 2/3 Queue Workflow" {
     }
 
     It "renders tab-specific footer action text" {
-        Get-DashboardFooterText -CurrentTab 1 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Toggle Workload \| \[`\] Details: None \| \[Enter\] Commit'
+        $tab1Footer = Get-DashboardFooterText -CurrentTab 1
+        $tab1Footer | Should -Match '\[`]Details: None \| \[M\]ixed=Off \| \[/\]Filters: q='''' \| \[G\]roup=''All'' \| \[F\]avourites=Off'
+        $tab1Footer | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Toggle \| \[R\] CommitMode'
+        $tab1Footer | Should -Match '\[Enter\] Commit & Exit \| \[Esc\] Cancel'
         Get-DashboardFooterText -CurrentTab 2 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Set Blueprint \| \[A\] Queue Ideal States \| \[Enter\] Commit'
         Get-DashboardFooterText -CurrentTab 3 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Toggle Override \| \[Bksp\] Clear Queue \| \[Enter\] Commit'
-        Get-DashboardFooterText -CurrentTab 4 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Queue Toggle/Cycle \| \[Right\] Edit \| \[Left or \+/-\] Poll Seconds \| \[Enter\] Commit'
+        Get-DashboardFooterText -CurrentTab 4 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Edit Setting \| \[Right\] Edit \| \[Left or \+/-\] Poll Seconds \| \[Enter\] Commit/Confirm Action \| Actions are exclusive'
     }
 
     It "sets active blueprint immediately and updates mode rows" {
@@ -350,9 +353,24 @@ Describe "Dashboard Tab 4 Settings" {
 
     It "returns settings as active array for tab 4" {
         $settings = @([pscustomobject]@{ Key = "notifications"; Type = "bool"; Value = $true })
-        $rows = Get-ActiveStateArray -CurrentTab 4 -WorkloadStates @([pscustomobject]@{ Name = "dummy" }) -ModeStates @([pscustomobject]@{ Name = "dummy" }) -SettingsStates $settings
+        $rows = Get-ActiveStateArray -CurrentTab 4 -WorkloadStates @([pscustomobject]@{ Name = "dummy" }) -ModeStates @([pscustomobject]@{ Name = "dummy" }) -SettingsStates $settings -ActionStates @()
         @($rows).Count | Should -Be 1
         $rows[0].Key | Should -Be "notifications"
+    }
+
+    It "builds tab 4 rows with section separator and action rows" {
+        $settings = @([pscustomobject]@{ Key = "notifications"; Type = "bool"; Value = $true; CurrentValue = $true })
+        $actions = @([pscustomobject]@{ Key = "Reset_Interceptors"; Type = "action"; ActionId = "Reset_Interceptors" })
+
+        $rows = @(Get-DashboardTab4Rows -SettingsRows $settings -ActionRows $actions)
+
+        $rows.Count | Should -Be 3
+        $rows[0].Key | Should -Be "notifications"
+        $rows[1].Type | Should -Be "section"
+        $rows[2].ActionId | Should -Be "Reset_Interceptors"
+        (Test-DashboardTab4RowIsSetting -Row $rows[0]) | Should -BeTrue
+        (Test-DashboardTab4RowIsSection -Row $rows[1]) | Should -BeTrue
+        (Test-DashboardTab4RowIsAction -Row $rows[2]) | Should -BeTrue
     }
 
     It "loads configured settings rows and provides descriptions" {
@@ -440,6 +458,58 @@ Describe "Dashboard Tab 4 Settings" {
         $saved._config.untouched_key | Should -Be "keep"
     }
 
+    It "global interceptor reset disables setting and commits sync-only cleanup" {
+        $queue = @{}
+        $rows = @(
+            [pscustomobject]@{
+                Key = "enable_interceptors"
+                Type = "bool"
+                CurrentValue = $true
+                Value = $true
+                Choices = @()
+                Min = $null
+            }
+        )
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{
+                enable_interceptors = $true
+            }
+        }
+        Mock -CommandName Invoke-DashboardCommit -MockWith { }
+        Mock -CommandName Stop-DashboardInterceptorHelperProcesses -MockWith { 2 }
+
+        $result = Invoke-DashboardGlobalInterceptorReset -SettingsRows $rows -JsonPath "C:\fake\workspaces.json" -Workspaces $workspaces -PendingHardwareChanges $queue -OrchestratorPath "C:\fake\Orchestrator.ps1"
+
+        $rows[0].Value | Should -BeFalse
+        $rows[0].CurrentValue | Should -BeFalse
+        $result.DisabledInterceptors | Should -BeTrue
+        $result.KilledProcessCount | Should -Be 2
+        Assert-MockCalled -CommandName Invoke-DashboardCommit -Times 1 -Exactly -ParameterFilter {
+            @($PendingStates).Count -eq 0 -and
+            $OrchestratorPath -eq "C:\fake\Orchestrator.ps1"
+        }
+    }
+
+    It "kills only interceptor helper shell processes during emergency cleanup" {
+        Mock -CommandName Get-CimInstance -MockWith {
+            @(
+                [pscustomobject]@{ Name = "pwsh.exe"; ProcessId = 111; CommandLine = 'pwsh.exe -File C:\repo\Interceptor.ps1 WINWORD.EXE' },
+                [pscustomobject]@{ Name = "powershell.exe"; ProcessId = 222; CommandLine = 'powershell -File C:\repo\InterceptorPoll.ps1 -WorkloadName Office' },
+                [pscustomobject]@{ Name = "pwsh.exe"; ProcessId = 333; CommandLine = 'pwsh.exe -File C:\repo\Dashboard.ps1' },
+                [pscustomobject]@{ Name = "notepad.exe"; ProcessId = 444; CommandLine = 'notepad.exe' }
+            )
+        }
+        Mock -CommandName Stop-Process -MockWith { }
+
+        $killed = Stop-DashboardInterceptorHelperProcesses
+
+        $killed | Should -Be 2
+        Assert-MockCalled -CommandName Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 111 -and $Force }
+        Assert-MockCalled -CommandName Stop-Process -Times 1 -Exactly -ParameterFilter { $Id -eq 222 -and $Force }
+        Assert-MockCalled -CommandName Stop-Process -Times 0 -Exactly -ParameterFilter { $Id -eq 333 }
+        Assert-MockCalled -CommandName Stop-Process -Times 0 -Exactly -ParameterFilter { $Id -eq 444 }
+    }
+
     It "marks settings row as pending when desired differs from current" {
         $row = [pscustomobject]@{
             Key = "notifications"
@@ -451,6 +521,77 @@ Describe "Dashboard Tab 4 Settings" {
         (Test-DashboardSettingsRowPending -Row $row) | Should -BeTrue
         $row.Value = $true
         (Test-DashboardSettingsRowPending -Row $row) | Should -BeFalse
+    }
+
+    It "does not treat action rows as pending settings rows" {
+        $actionRow = [pscustomobject]@{
+            Key = "Reset_Interceptors"
+            Type = "action"
+            ActionId = "Reset_Interceptors"
+            CurrentValue = "n/a"
+            Value = "n/a"
+        }
+        (Test-DashboardTab4RowIsAction -Row $actionRow) | Should -BeTrue
+        (Test-DashboardTab4RowIsSetting -Row $actionRow) | Should -BeFalse
+    }
+
+    It "shows confirm text only when action is armed" {
+        $actionRow = [pscustomobject]@{
+            Key = "Reset_Interceptors"
+            Type = "action"
+            ActionId = "Reset_Interceptors"
+        }
+
+        (Get-DashboardTab4RowValueDisplay -Row $actionRow -PendingActionConfirmId "") | Should -Be "Run"
+        (Get-DashboardTab4RowValueDisplay -Row $actionRow -PendingActionConfirmId "Reset_Interceptors") | Should -Be "Confirm: Enter"
+    }
+
+    It "requires Enter twice to execute a tab 4 action row" {
+        $actionRow = [pscustomobject]@{
+            Key = "Reset_Interceptors"
+            Type = "action"
+            ActionId = "Reset_Interceptors"
+        }
+        $settingsRows = @(
+            [pscustomobject]@{ Key = "notifications"; Type = "bool"; CurrentValue = $true; Value = $true }
+        )
+
+        $first = Resolve-DashboardActionEnterDecision -Row $actionRow -PendingActionConfirmId "" -SettingsRows $settingsRows
+        $first.Decision | Should -Be "ArmAction"
+        $first.NextPendingActionId | Should -Be "Reset_Interceptors"
+
+        $second = Resolve-DashboardActionEnterDecision -Row $actionRow -PendingActionConfirmId "Reset_Interceptors" -SettingsRows $settingsRows
+        $second.Decision | Should -Be "ExecuteAction"
+    }
+
+    It "blocks action execution when there are pending setting changes" {
+        $actionRow = [pscustomobject]@{
+            Key = "Reset_Interceptors"
+            Type = "action"
+            ActionId = "Reset_Interceptors"
+        }
+        $settingsRows = @(
+            [pscustomobject]@{ Key = "notifications"; Type = "bool"; CurrentValue = $true; Value = $false }
+        )
+
+        $decision = Resolve-DashboardActionEnterDecision -Row $actionRow -PendingActionConfirmId "Reset_Interceptors" -SettingsRows $settingsRows
+        $decision.Decision | Should -Be "BlockedByPendingSettings"
+        $decision.Message | Should -Match 'exclusive'
+    }
+
+    It "dispatches Reset_Interceptors action through action dispatcher" {
+        $queue = @{}
+        $rows = @([pscustomobject]@{ Key = "enable_interceptors"; Type = "bool"; CurrentValue = $true; Value = $true })
+        $workspaces = [pscustomobject]@{ _config = [pscustomobject]@{ enable_interceptors = $true } }
+        Mock -CommandName Invoke-DashboardGlobalInterceptorReset -MockWith {
+            return [pscustomobject]@{ DisabledInterceptors = $true; KilledProcessCount = 4 }
+        }
+
+        $result = Invoke-DashboardActionById -ActionId "Reset_Interceptors" -SettingsRows $rows -JsonPath "C:\fake\workspaces.json" -Workspaces $workspaces -PendingHardwareChanges $queue -OrchestratorPath "C:\fake\Orchestrator.ps1"
+
+        $result.Success | Should -BeTrue
+        $result.Message | Should -Match 'Killed 4 helper process'
+        Assert-MockCalled -CommandName Invoke-DashboardGlobalInterceptorReset -Times 1 -Exactly
     }
 
     It "requires non-empty value for shortcut prefix settings" {
@@ -511,11 +652,22 @@ Describe "Dashboard Commit Scope Rules" {
                 Action = "Stop"
             }
         )
+        Mock -CommandName Invoke-OrchestratorScript -MockWith {
+            if ($WorkspaceName -eq "__SYNC_ONLY__") {
+                throw "Fatal: Workspace '__SYNC_ONLY__' not defined in workspaces.json."
+            }
+        }
         Mock -CommandName Invoke-WorkspaceCommit -MockWith { }
 
         Invoke-DashboardCommit -PendingStates $pending -PendingHardwareChanges $queue -OrchestratorPath "C:\fake\Orchestrator.ps1"
 
         $queue.Keys.Count | Should -Be 0
+        Assert-MockCalled -CommandName Invoke-OrchestratorScript -Times 1 -Exactly -ParameterFilter {
+            $WorkspaceName -eq "__SYNC_ONLY__" -and $Action -eq "Start"
+        }
+        Assert-MockCalled -CommandName Invoke-WorkspaceCommit -Times 1 -Exactly -ParameterFilter {
+            $SkipInterceptorSync -eq $true
+        }
     }
 
     It "runs sync-only orchestrator path when there are no pending states" {
@@ -642,8 +794,187 @@ Describe "Dashboard Workload Detail Modes" {
     }
 
     It "includes detail mode hint in tab 1 footer only" {
-        Get-DashboardFooterText -CurrentTab 1 -WorkloadDetailMode "All" | Should -Match '\[`\] Details: All'
+        Get-DashboardFooterText -CurrentTab 1 -WorkloadDetailMode "All" | Should -Match '\[`]Details: All'
         Get-DashboardFooterText -CurrentTab 2 -WorkloadDetailMode "All" | Should -Not -Match 'Details:'
         Get-DashboardFooterText -CurrentTab 3 -WorkloadDetailMode "All" | Should -Not -Match 'Details:'
+    }
+}
+
+Describe "Dashboard Workload Group Label Formatting" {
+    BeforeAll {
+        $script:here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        . (Join-Path -Path $script:here -ChildPath "Dashboard.ps1")
+    }
+
+    It "pads short domain names to 8 characters inside brackets" {
+        $row = [pscustomobject]@{
+            Name   = "DAW_Cubase"
+            Domain = "Audio"
+        }
+
+        $label = Format-WorkloadDisplayName -WorkloadRow $row
+        $label | Should -Match '^\[Audio {3}\] DAW_Cubase$'
+
+        $inside = $label.Substring(1, 8)
+        $inside.Length | Should -Be 8
+    }
+
+    It "truncates long domain names to 8 characters inside brackets" {
+        $row = [pscustomobject]@{
+            Name   = "Tool"
+            Domain = "VeryLongDomain"
+        }
+
+        $label = Format-WorkloadDisplayName -WorkloadRow $row
+        $inside = $label.Substring(1, 8)
+
+        $inside | Should -Be "VeryLong"
+        $label | Should -Match '^\[VeryLong\] Tool$'
+    }
+
+    It "falls back to plain name when domain is empty" {
+        $row = [pscustomobject]@{
+            Name   = "Standalone"
+            Domain = ""
+        }
+
+        $label = Format-WorkloadDisplayName -WorkloadRow $row
+        $label | Should -Be "Standalone"
+    }
+}
+
+Describe "Dashboard Workload Filtering and Viewport" {
+    BeforeAll {
+        $script:here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        . (Join-Path -Path $script:here -ChildPath "Dashboard.ps1")
+    }
+
+    It "filters workloads by domain, favorites, mixed, and search query" {
+        $rows = @(
+            [pscustomobject]@{ Name = "DAW_Cubase"; Domain = "Audio"; Tags = @("audio", "daw"); Aliases = @("Cubase"); Favorite = $true; Hidden = $false; Priority = 10; CurrentState = "Mixed" },
+            [pscustomobject]@{ Name = "Office"; Domain = "Office"; Tags = @("productivity"); Aliases = @("M365"); Favorite = $true; Hidden = $false; Priority = 20; CurrentState = "Active" },
+            [pscustomobject]@{ Name = "InternalTool"; Domain = "Tools"; Tags = @("internal"); Aliases = @(); Favorite = $false; Hidden = $true; Priority = 5; CurrentState = "Inactive" }
+        )
+        $filter = [pscustomobject]@{ Query = "cuba"; Domain = "Audio"; FavoritesOnly = $true; MixedOnly = $true }
+
+        $result = @(Get-FilteredWorkloadStates -WorkloadStates $rows -FilterState $filter)
+
+        $result.Count | Should -Be 1
+        $result[0].Name | Should -Be "DAW_Cubase"
+    }
+
+    It "hides hidden workloads unless query explicitly matches" {
+        $rows = @(
+            [pscustomobject]@{ Name = "InternalTool"; Domain = "Tools"; Tags = @("internal"); Aliases = @("debug"); Favorite = $false; Hidden = $true; Priority = 1; CurrentState = "Inactive" }
+        )
+        $noQuery = [pscustomobject]@{ Query = ""; Domain = ""; FavoritesOnly = $false; MixedOnly = $false }
+        $withQuery = [pscustomobject]@{ Query = "internal"; Domain = ""; FavoritesOnly = $false; MixedOnly = $false }
+
+        @(Get-FilteredWorkloadStates -WorkloadStates $rows -FilterState $noQuery).Count | Should -Be 0
+        @(Get-FilteredWorkloadStates -WorkloadStates $rows -FilterState $withQuery).Count | Should -Be 1
+    }
+
+    It "returns viewport range centered around cursor when possible" {
+        $range = Get-ViewportRange -TotalCount 100 -CursorIndex 50 -WindowSize 11
+        $range.Start | Should -Be 45
+        $range.End | Should -Be 55
+    }
+
+    It "cycles domain filter across all groups and back to all" {
+        $rows = @(
+            [pscustomobject]@{ Domain = "Office" },
+            [pscustomobject]@{ Domain = "Audio" }
+        )
+        $filter = [pscustomobject]@{ Domain = "" }
+
+        Update-WorkloadDomainFilter -WorkloadStates $rows -FilterState $filter
+        $filter.Domain | Should -Be "Audio"
+        Update-WorkloadDomainFilter -WorkloadStates $rows -FilterState $filter
+        $filter.Domain | Should -Be "Office"
+        Update-WorkloadDomainFilter -WorkloadStates $rows -FilterState $filter
+        $filter.Domain | Should -Be ""
+    }
+}
+
+Describe "Dashboard Commit Return Mode" {
+    BeforeAll {
+        $script:here = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        . (Join-Path -Path $script:here -ChildPath "Dashboard.ps1")
+    }
+
+    It "uses Exit as the default commit mode" {
+        Get-DashboardCommitModeDefault | Should -Be "Exit"
+    }
+
+    It "toggles commit mode between Exit and Return" {
+        Toggle-DashboardCommitMode -CurrentMode "Exit" | Should -Be "Return"
+        Toggle-DashboardCommitMode -CurrentMode "Return" | Should -Be "Exit"
+        Toggle-DashboardCommitMode -CurrentMode "Unexpected" | Should -Be "Exit"
+    }
+
+    It "formats commit mode indicator text" {
+        Get-DashboardCommitModeText -CommitMode "Exit" | Should -Be "CommitMode: Exit"
+        Get-DashboardCommitModeText -CommitMode "Return" | Should -Be "CommitMode: Return"
+    }
+
+    It "includes commit mode text in tab footer output" {
+        Get-DashboardFooterText -CurrentTab 1 -WorkloadDetailMode "None" -CommitMode "Return" | Should -Match 'Commit & Return'
+        Get-DashboardFooterText -CurrentTab 1 -WorkloadDetailMode "None" -CommitMode "Return" | Should -Match '\[R\] CommitMode'
+        Get-DashboardFooterText -CurrentTab 4 -CommitMode "Exit" | Should -Match 'CommitMode: Exit'
+    }
+
+    It "returns Exit immediately when commit mode is Exit" {
+        $result = Resolve-DashboardPostCommitAction -CommitMode "Exit" -HasPostCommitMessages $false
+        $result | Should -Be "Exit"
+    }
+
+    It "returns ReturnToDashboard when commit mode is Return and non-escape key is pressed" {
+        $result = Resolve-DashboardPostCommitAction -CommitMode "Return" -HasPostCommitMessages $false -ReadKeyScript {
+            return [pscustomobject]@{ Key = [ConsoleKey]::A }
+        }
+        $result | Should -Be "ReturnToDashboard"
+    }
+
+    It "returns Exit when commit mode is Return and escape key is pressed" {
+        $result = Resolve-DashboardPostCommitAction -CommitMode "Return" -HasPostCommitMessages $true -ReadKeyScript {
+            return [pscustomobject]@{ Key = [ConsoleKey]::Escape }
+        }
+        $result | Should -Be "Exit"
+    }
+
+    It "keeps commit sequence intact in Return mode" {
+        $workloads = @(
+            [pscustomobject]@{ Name = "DAW_Cubase"; CurrentState = "Inactive"; DesiredState = "Active"; ProfileType = "App_Workload" }
+        )
+        $modes = @(
+            [pscustomobject]@{ Name = "Eco_Life"; CurrentState = "Inactive"; DesiredState = "Active"; ProfileType = "System_Mode" }
+        )
+        $queue = @{}
+        $workspaces = [pscustomobject]@{
+            System_Modes = [pscustomobject]@{}
+            Hardware_Definitions = [pscustomobject]@{}
+        }
+        $settingsRows = @()
+
+        Mock -CommandName Invoke-SafeClearHost -MockWith { }
+        Mock -CommandName Save-DashboardStateMemory -MockWith { }
+        Mock -CommandName Invoke-DashboardCommit -MockWith { }
+        Mock -CommandName Get-DashboardPostCommitMessages -MockWith { @() }
+
+        $result = Invoke-DashboardCommitFlow `
+            -WorkloadStates $workloads `
+            -ModeStates $modes `
+            -PendingHardwareChanges $queue `
+            -OrchestratorPath "C:\fake\Orchestrator.ps1" `
+            -StateFilePath "C:\fake\state.json" `
+            -JsonPath "C:\fake\workspaces.json" `
+            -Workspaces $workspaces `
+            -SettingsRows $settingsRows `
+            -CommitMode "Return" `
+            -ReadKeyScript { return [pscustomobject]@{ Key = [ConsoleKey]::Enter } }
+
+        $result | Should -Be "ReturnToDashboard"
+        Assert-MockCalled -CommandName Save-DashboardStateMemory -Times 1 -Exactly
+        Assert-MockCalled -CommandName Invoke-DashboardCommit -Times 1 -Exactly
     }
 }
