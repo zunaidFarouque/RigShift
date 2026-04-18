@@ -1,89 +1,177 @@
-# WorkspaceManager
+# RigShift
 
-**A declarative, bare-metal state management engine for Windows.**
+<p align="center">
+  <img src="Assets/Social Preview.png" alt="RigShift social preview banner" width="900" />
+</p>
 
-WorkspaceManager is a zero-latency orchestration tool that allows you to define complex software environments (Workspaces) using a single JSON configuration. It guarantees that your machine only runs the exact compute resources—background services and executables—required for your current task, mathematically eliminating configuration drift, DPC latency spikes, and background bloat.
+**Declarative bare-metal orchestration for Windows.**
 
-Whether you are configuring a sterile environment for live audio/VJ performance, spinning up local GIS licensing servers, or routing Docker containers, WorkspaceManager ensures your operating system obeys your workflow, not the other way around.
+RigShift lets you define machine state as code and switch contexts safely: services, processes, power plans, registry values, PnP devices, and optional launch interception.  
+One file, `Scripts\workspaces.json`, declares exactly what should be ON, OFF, or conditional for each workflow.
 
----
+It is built for power users who demand deterministic environments (live audio, software dev, hardcore gaming, battery preservation, kiosk modes) without permanent OS mutilation or black-box "booster" tools.
 
-## 📖 The Philosophy
+## Why RigShift
 
-Modern Windows applications (like ArcGIS, Cubase, or Adobe CC) deploy persistent background services, telemetry hooks, and update agents that run constantly—even when the application is closed. This causes hardware interrupts, drains battery, and monopolizes the PCIe bus. 
+Modern Windows is optimized for general-purpose computing, not sterile task isolation. Background services, update activity, device polling, and telemetry run relentlessly—introducing DPC latency spikes, hardware contention, and unpredictable side effects exactly when you can least afford them.
 
-Standard "debloat" scripts are blunt instruments that break core OS functionality. "Game Boosters" are black-box consumer tools that blindly kill random services. 
+Standard "debloat" scripts permanently break core OS functionality. Consumer "game boosters" blindly kill random tasks. RigShift is a scalpel. It provides:
 
-**WorkspaceManager is a scalpel.** It treats your local machine like a Kubernetes cluster. You declare the exact state you want in a JSON file, and the engine handles the precise sequence of service toggles, UAC elevations, timing delays, and teardowns required to achieve it.
+- **Declarative State Enforcement** instead of fragile, one-off batch scripts.
+- **Reversible Transitions** between explicitly named, hardware-locked contexts.
+- **Bare-Metal Control** with direct service, process, PnP device, and power operations.
+- **Practical Safety Rails** through tested teardown behavior, RAM protection, and explicit documentation.
 
-## ✨ Core Features
+## Core capabilities
 
-* **Declarative JSON Architecture:** Define exactly what a Workspace requires (Services, Executables, Timers). The engine handles the execution logic.
-* **Race-Condition Immunity:** Inject explicit millisecond delays (`t 3000`) between sequential service starts to ensure background dependencies are fully initialized before GUI applications launch.
-* **Zombie Process Handling:** Teardown sequences feature built-in timeouts to catch silently crashed applications and prevent system locks.
-* **Protected Processes:** Define critical executables that halt the teardown sequence if detected in RAM, completely preventing accidental data loss.
-* **Headless & Dashboard Modes:** Run silently via Start Menu shortcuts (perfect for PowerToys Run), or manage state interactively via the PowerShell TUI Dashboard (`Dashboard.ps1`). In the main list, **Space** toggles desired Start/Stop (for **Mixed** current state, only `Ready`/`Stopped`), and **Backspace** clears pending changes; see [Configuration Schema & Syntax Rules](DOCs/CONFIGURATION.md#11-workspace-type-type).
-* **Zero External Dependencies:** Built entirely in native PowerShell 7. No background agents, no electron wrappers, no telemetry.
+- **Dashboard TUI** (`Scripts\Dashboard.ps1`) for interactive context switching, compliance checks, and config commits.
+- **Headless Orchestration** (`Scripts\Orchestrator.ps1`, via `Orchestrator.cmd`) for rapid automation and scripting workflows.
+- **Modular Configuration Domains** via `_config`, `Hardware_Definitions`, `System_Modes`, and `App_Workloads`.
+- **Optional IFEO Interceptors** for pre-launch priming and managed hook lifecycles.
+- **Shortcut Generation and Setup Helpers** for frictionless day-to-day usage.
+- **Zero External Runtime Framework** beyond native PowerShell and standard Windows tooling.
 
-## 🚀 Prerequisites
+## Architecture at a glance
 
-WorkspaceManager requires a modern, sterile Windows terminal environment.
-
-1. **Windows 10 / 11**
-2. **PowerShell 7+** (`pwsh.exe`)
-3. **gsudo** (Linux-style `sudo` for Windows. Highly recommended to install via [Scoop](https://scoop.sh/))
-
-```powershell
-# Install gsudo via Scoop
-scoop install gsudo
-gsudo config CacheMode Auto
+```mermaid
+flowchart LR
+    workspacesJson["Scripts/workspaces.json"] --> orchestrator["Scripts/Orchestrator.ps1"]
+    workspacesJson --> dashboard["Scripts/Dashboard.ps1"]
+    workspacesJson --> workspaceState["Scripts/WorkspaceState.ps1"]
+    orchestrator --> windowsState["Windows State"]
+    dashboard --> orchestrator
+    workspaceState --> dashboard
+    windowsState --> services["Services/Processes"]
+    windowsState --> systemCfg["Power/Registry/PnP"]
+    windowsState --> ifeo["IFEO Interceptors"]
 ````
 
-## 🛠️ Quick Start
+## Prerequisites
 
-**1. Clone the repository:**
+1.  Windows 10 or 11
+2.  PowerShell 7 (`pwsh.exe`)
+3.  [gsudo](https://github.com/gerardog/gsudo) (Highly recommended for seamless UAC elevation)
+
+**Recommended install:**
 
 ```powershell
-git clone [https://github.com/yourusername/WorkspaceManager.git](https://github.com/yourusername/WorkspaceManager.git)
-cd WorkspaceManager
+scoop install gsudo
+gsudo config CacheMode Auto
 ```
 
-**2. Define your Workspaces:**
-Edit the `workspaces.json` file. Follow the strict syntax rules defined in the [Configuration Schema](SCHEMA.md).
+*Note: Machine-state operations are elevated through `gsudo` in the relevant script paths.*
+
+## Quick start
+
+1.  Clone and enter the repository:
+
+<!-- end list -->
+
+```powershell
+git clone [https://github.com/zunaidFarouque/RigShift.git](https://github.com/zunaidFarouque/RigShift.git)
+cd RigShift
+```
+
+2.  Create or edit `Scripts\workspaces.json`:
+
+<!-- end list -->
 
 ```json
 {
-  "Audio_Production": {
-    "services": ["eLicenserSvc", "t 3000", "Audiosrv"],
-    "executables": ["'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe' --profile Live"],
-    "protected_processes": ["Cubase12"],
-    "reverse_relations": ["wuauserv"]
-  }
+  "_config": {},
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {}
 }
 ```
 
-**3. Generate Shortcuts (Optional):**
-If you want to use PowerToys Run or Windows Search for instant, headless orchestration, run the indexer once to generate `!Start-Workspace` and `!Stop-Workspace` shortcuts.
+3.  Optional setup helper (creates `RigShift Dashboard.lnk` at the repo root and can add Desktop/Start Menu shortcuts):
+
+<!-- end list -->
 
 ```powershell
-.\Generate-Shortcuts.ps1
+.\Setup.cmd
 ```
 
-**4. Execute:**
-Run the Orchestrator manually, or use your newly created shortcuts.
+4.  Optional: generate headless Start Menu shortcuts:
+
+<!-- end list -->
 
 ```powershell
-gsudo pwsh -File Orchestrator.ps1 -WorkspaceName "Audio_Production" -Action "Start"
+.\Generate-Shortcuts.cmd
 ```
 
-## 📚 Documentation
+5.  Launch the dashboard to manage states interactively:
 
-For advanced configuration, edge-case mitigation, and TDD contribution guidelines, please refer to the official documentation:
+<!-- end list -->
 
-  * [Configuration Schema & Syntax Rules](SCHEMA.md)
-  * [Edge Cases & Mitigation Strategies](https://www.google.com/search?q=EDGE_CASES.md)
-  * [Contributing & Testing (Pester)](https://www.google.com/search?q=CONTRIBUTING.md)
+```powershell
+.\Scripts\Run-Dashboard.cmd
+```
 
-## 🛡️ License
+6.  Or, run orchestration directly via CLI:
 
-Distributed under the MIT License. See `LICENSE` for more information.
+<!-- end list -->
+
+```powershell
+.\Orchestrator.cmd -WorkspaceName "My_Mode" -Action "Start"
+```
+
+*Note: When using the dashboard, `Scripts\state.json` is written beside `Scripts\workspaces.json` to persist mode blueprint state.*
+
+## Configuration model
+
+  - `_config` controls global behavior such as notifications, interceptor sync, poll timeout, and shortcut prefixes.
+  - `Hardware_Definitions` is the reusable component catalog (service, registry, PnP device, process, stateless, or scripted overrides).
+  - `System_Modes` defines power plan and desired ON/OFF/ANY state per component.
+  - `App_Workloads` defines nested domains and workloads with services, executables, tags, aliases, and optional intercept rules.
+
+Complete schema and token rules: [DOCs/Configuration.md](https://www.google.com/search?q=DOCs/Configuration.md)
+
+## Shortcuts, icons, and branding notes
+
+  - `Generate-Shortcuts.cmd` creates Start/Stop shortcuts in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\RigShift`.
+  - If `Assets\Dashboard.ico` exists, generated `.lnk` files use it in Explorer.
+  - `.cmd` files cannot carry custom Explorer icons by themselves; use `.lnk` launchers for branded tiles.
+  - For Windows Terminal tab/taskbar branding, configure a profile icon as described in [DOCs/Windows-Terminal.md](https://www.google.com/search?q=DOCs/Windows-Terminal.md).
+
+**GitHub social preview:** Upload `Assets\Social Preview.png` in repository **Settings → General → Social preview** to match this README banner in link cards.
+
+## Documentation
+
+| Document | Topic |
+|----------|-------|
+| [DOCs/Architecture.md](https://www.google.com/search?q=DOCs/Architecture.md) | Components, boundaries, naming, and runtime model |
+| [DOCs/Configuration.md](https://www.google.com/search?q=DOCs/Configuration.md) | JSON schema, tokens, intercept rules, and shortcut behavior |
+| [DOCs/Orchestrator-Flow.md](https://www.google.com/search?q=DOCs/Orchestrator-Flow.md) | Parameters, phases, routing, and execution order |
+| [DOCs/Dashboard.md](https://www.google.com/search?q=DOCs/Dashboard.md) | Tab behavior, keybindings, commit flow, and actions |
+| [DOCs/Edge-Cases.md](https://www.google.com/search?q=DOCs/Edge-Cases.md) | Operational caveats, risks, and mitigations |
+| [DOCs/Audit.md](https://www.google.com/search?q=DOCs/Audit.md) | Doc-to-implementation verification matrix |
+| [DOCs/Windows-Terminal.md](https://www.google.com/search?q=DOCs/Windows-Terminal.md) | Optional Windows Terminal icon profile |
+
+## Testing
+
+Pester tests serve as behavioral contracts for core components:
+
+  - `tests\Orchestrator.Tests.ps1`
+  - `tests\Dashboard.Tests.ps1`
+  - `tests\WorkspaceState.Tests.ps1`
+  - `tests\Interceptor.Tests.ps1`
+
+Run from repository root:
+
+```powershell
+Invoke-Pester -OutputFormat NUnitXml -OutputFile .\tests\testResults.xml
+```
+
+## Limitations and safety notes
+
+  - Shared services across workloads are not dependency-resolved globally; commit order can matter when profiles overlap.
+  - Workload stop operations use `taskkill` by executable leaf name and can terminate unsaved applications.
+  - Workload names should be unique across all `App_Workloads` domains to avoid ambiguous resolution.
+  - IFEO-based interception can interact with endpoint security policy; disable interceptors while troubleshooting policy conflicts.
+
+## License
+
+Distributed under the MIT License. See [LICENSE](https://www.google.com/search?q=LICENSE).
+

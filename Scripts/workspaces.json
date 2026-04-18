@@ -1,0 +1,261 @@
+{
+  "_config": {
+    "console_style": "Normal",
+    "enable_interceptors": true,
+    "notifications": true,
+    "interceptor_poll_max_seconds": 15,
+    "shortcut_prefix_start": "!Start-",
+    "shortcut_prefix_stop": "!Stop-",
+    "disable_startup_logo": false
+  },
+  "Hardware_Definitions": {
+    "GPU_Scheduling_HAGS": {
+      "description": "Hardware-accelerated GPU scheduling toggle (restart required after changes).",
+      "type": "registry",
+      "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers",
+      "name": "HwSchMode",
+      "value_on": 2,
+      "value_off": 1,
+      "post_change_message": "[CRITICAL] HAGS state altered. RESTART your PC to apply hybrid graphics changes."
+    },
+    "Windows_Update": {
+      "description": "Windows Update service availability and patch activity control.",
+      "type": "service",
+      "name": "wuauserv",
+      "action_override_on": [
+        "'./CustomScripts/WUB-Enable Updates.lnk'"
+      ],
+      "action_override_off": [
+        "'./CustomScripts/WUB-Disable Updates.lnk'"
+      ]
+    },
+    "Search_Indexer": {
+      "description": "Windows Search indexing service used for fast file and app lookup.",
+      "type": "service",
+      "name": "WSearch"
+    },
+    "SMB_Server_Service": {
+      "description": "SMB file sharing server component for sharing local resources.",
+      "type": "service",
+      "name": "LanmanServer"
+    },
+    "SMB_Workstation_Service": {
+      "description": "SMB client component for accessing shared network resources.",
+      "type": "service",
+      "name": "LanmanWorkstation"
+    },
+    "Wi_Fi_Adapter": {
+      "description": "Wireless network adapter presence and active availability.",
+      "type": "pnp_device",
+      "match": [
+        "*Wi-Fi*",
+        "*Wireless*"
+      ]
+    },
+    "Ethernet_Port": {
+      "description": "Wired LAN adapter presence and active availability.",
+      "type": "pnp_device",
+      "match": [
+        "*2.5GbE*"
+      ]
+    },
+    "Bluetooth_Radio": {
+      "description": "Bluetooth radio availability for wireless peripherals.",
+      "type": "pnp_device",
+      "match": [
+        "*Bluetooth*"
+      ]
+    },
+    "Battery_ACPI": {
+      "description": "Battery ACPI device detection for mobile power management.",
+      "type": "pnp_device",
+      "match": [
+        "*ACPI*"
+      ]
+    },
+    "Other_Peripherals": {
+      "description": "Optional camera and biometric peripherals that can be disabled in focused modes.",
+      "type": "pnp_device",
+      "match": [
+        "*Camera*",
+        "*Webcam*",
+        "*Biometric*",
+        "*Windows Hello*"
+      ]
+    },
+    "Display_High_Refresh_Rate": {
+      "description": "High-refresh display mode state (above 60 Hz detected as ON).",
+      "type": "stateless",
+      "action_override_on": [
+        "'./CustomScripts/Set-HighRefreshByMonitorCount.ps1'"
+      ],
+      "action_override_off": [
+        "'./CustomScripts/Monitors Refresh 60hz.lnk'"
+      ]
+    },
+    "Gigabyte_Control_Center": {
+      "description": "Gigabyte Control Center (heavy, bloated but have more features).",
+      "type": "process",
+      "name": "GCC.exe",
+      "action_override_on": [
+        "'./CustomScripts/Start_GCC.lnk'"
+      ],
+      "action_override_off": [
+        "gsudo taskkill /F /IM GCC.exe"
+      ]
+    },
+    "Gigabyte_Fan_Battery_Control": {
+      "description": "Gigabyte fan/battery control (lightweight, good for real time performance).",
+      "type": "process",
+      "name": "main.exe",
+      "action_override_on": [
+        "'./CustomScripts/Start_GFBC.lnk'"
+      ],
+      "action_override_off": [
+        "gsudo taskkill /F /IM main.exe"
+      ]
+    }
+  },
+  "System_Modes": {
+    "Normal_Life": {
+      "description": "Default desktop behavior.",
+      "power_plan": "Balanced",
+      "targets": {
+        "GPU_Scheduling_HAGS": "ON",
+        "Windows_Update": "ON",
+        "Search_Indexer": "ON",
+        "SMB_Server_Service": "ON",
+        "SMB_Workstation_Service": "ON",
+        "Wi_Fi_Adapter": "ON",
+        "Ethernet_Port": "ON",
+        "Bluetooth_Radio": "ON",
+        "Battery_ACPI": "ON",
+        "Unnecessary_Peripherals": "ON",
+        "Display_High_Refresh_Rate": "ON",
+        "Gigabyte_Control_Center": "ON",
+        "Gigabyte_Fan_Battery_Control": "OFF"
+      }
+    },
+    "Live_Stage_Life": {
+      "description": "Real-time audio mode with minimized background noise.",
+      "power_plan": "Max Performance",
+      "post_change_message": "Live Stage mode engaged.",
+      "targets": {
+        "GPU_Scheduling_HAGS": "OFF",
+        "Windows_Update": "OFF",
+        "Search_Indexer": "OFF",
+        "SMB_Server_Service": "OFF",
+        "SMB_Workstation_Service": "OFF",
+        "Wi_Fi_Adapter": "OFF",
+        "Ethernet_Port": "OFF",
+        "Bluetooth_Radio": "OFF",
+        "Battery_ACPI": "OFF",
+        "Unnecessary_Peripherals": "OFF",
+        "Display_High_Refresh_Rate": "OFF",
+        "Gigabyte_Control_Center": "OFF",
+        "Gigabyte_Fan_Battery_Control": "ON"
+      }
+    },
+    "Eco_Life": {
+      "description": "Battery-conscious mobile profile.",
+      "power_plan": "Power saver",
+      "targets": {
+        "GPU_Scheduling_HAGS": "ANY",
+        "Windows_Update": "OFF",
+        "Search_Indexer": "OFF",
+        "SMB_Server_Service": "OFF",
+        "SMB_Workstation_Service": "OFF",
+        "Wi_Fi_Adapter": "ANY",
+        "Ethernet_Port": "OFF",
+        "Bluetooth_Radio": "ANY",
+        "Battery_ACPI": "ANY",
+        "Unnecessary_Peripherals": "OFF",
+        "Display_High_Refresh_Rate": "ANY",
+        "Gigabyte_Control_Center": "OFF",
+        "Gigabyte_Fan_Battery_Control": "ON"
+      }
+    }
+  },
+  "App_Workloads": {
+    "Audio": {
+      "DAW_Cubase": {
+        "description": "Digital Audio Workstation runtime.",
+        "services": [
+          "Audiosrv"
+        ],
+        "executables": [
+          "'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe'"
+        ],
+        "tags": [
+          "audio",
+          "production",
+          "daw"
+        ],
+        "priority": 10,
+        "favorite": true,
+        "hidden": false,
+        "aliases": [
+          "Cubase"
+        ]
+      }
+    },
+    "Office": {
+      "Office": {
+        "description": "Microsoft Office and OneDrive workload.",
+        "services": [
+          "ClickToRunSvc"
+        ],
+        "executables": [
+          "'C:/Program Files/Microsoft OneDrive/OneDrive.exe'"
+        ],
+        "tags": [
+          "office",
+          "productivity",
+          "microsoft"
+        ],
+        "priority": 20,
+        "favorite": true,
+        "hidden": false,
+        "aliases": [
+          "Microsoft Office",
+          "M365"
+        ],
+        "intercepts": [
+          {
+            "exe": [
+              "WINWORD.EXE",
+              "EXCEL.EXE",
+              "POWERPNT.EXE"
+            ],
+            "requires": {
+              "services": [
+                "ClickToRunSvc"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "Tools": {
+      "StarDesk": {
+        "description": "StarDesk service and desktop app workload.",
+        "services": [
+          "StarDeskService"
+        ],
+        "executables": [
+          "'C:/Program Files/StarDesk/StarDesk.exe'"
+        ],
+        "tags": [
+          "desk",
+          "utility"
+        ],
+        "priority": 30,
+        "favorite": false,
+        "hidden": false,
+        "aliases": [
+          "Star Desk"
+        ]
+      }
+    }
+  }
+}

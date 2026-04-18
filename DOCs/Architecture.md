@@ -1,62 +1,91 @@
-# WorkspaceManager: Architecture & Nomenclature
+# RigShift: Architecture and Nomenclature
 
-**WorkspaceManager** is a declarative, bare-metal state management engine for Windows. It allows users to orchestrate complex software environments (background services, executables, and system states) using a single JSON configuration file. It ensures your machine is only running the exact compute resources needed for the current task, eliminating configuration drift and background bloat.
+RigShift is a declarative Windows state tool. You describe **what should be true** on the machine—services, apps, power plan, registry, PnP devices, and optional launch interception—in `workspaces.json`. The **Orchestrator** applies changes; the **Dashboard** inspects state and batches commits; **Interceptors** optionally prime workloads before selected executables run.
 
-## 1. Core Terminology
+**Naming:** User-facing strings (toasts, window titles, Start Menu folder) use **RigShift**. Managed IFEO registry values include `RigShift_Owner`, which is set to the fixed literal **`BG-Services-Orchestrator`** in `Orchestrator.ps1` so cleanup only touches hooks owned by this deployment (see [Edge-Cases.md](Edge-Cases.md)).
 
-### The Grouping
-* **Workspace**: The logical grouping of all services, executables, and rules required for a specific environment (e.g., `ArcGIS Workspace`, `Audio Production Workspace`, `Gaming Workspace`).
+The full JSON contract lives in [Configuration.md](Configuration.md). For the readme's collapsible cross-link index, start from [_schema.md](_schema.md).
 
-### The States
-Workspaces exist in one of three mathematical states, visually represented in the upcoming Dashboard TUI:
-* **Ready (Red 🔴)**: The Workspace is fully active. All required services and executables are running. *(Note: Red signifies "Active/In-Use/Do Not Disturb").*
-* **Stopped (Green 🟢)**: The Workspace is completely dormant. Zero background footprint. *(Note: Green signifies "Safe/Clear/Available").*
-* **Mixed (Yellow 🟡)**: Configuration drift detected. The Workspace is partially running or an error occurred during state transition.
+## 1. Configuration layout (`workspaces.json`)
 
-## 2. Workspace Components
+The file is one JSON object with reserved top-level sections:
 
-Each Workspace is defined by its required components:
-* **Services**: Windows background services required for the Workspace to function (e.g., license managers, SQL servers).
-* **Executables**: The primary GUI applications or CLI tools that belong to the Workspace.
-* **Protected Processes**: Critical executables that prevent the Workspace from being safely `Stopped` if they are currently running (to prevent accidental data loss, such as an unsaved Word document or a rendering video).
-* **Reverse Relations**: Background services or applications that should be explicitly turned **ON** when the Workspace is transitioned to `Stopped` (e.g., re-enabling an Antivirus service when a Game Workspace is closed).
+| Section | Role |
+|---------|------|
+| `_config` | Global flags: notifications, interceptor toggle, poll cap, shortcut prefixes, dashboard console style. Consumed by Orchestrator, Dashboard, shortcut generator, and Interceptor scripts. |
+| `Hardware_Definitions` | **Catalog** of named hardware or host components (registry, service, PnP device, process, or stateless). Each entry defines how to drive that component **ON** or **OFF**, often via `action_override_on` / `action_override_off` execution tokens. |
+| `System_Modes` | **Profiles** that combine a **power plan** and a **target map**: for each component name, desired `ON`, `OFF`, or `ANY` (no enforcement) while that mode is active. |
+| `App_Workloads` | **Nested** `Domain.WorkloadName` objects with `services`, `executables`, optional UI metadata (`description`, `tags`, `priority`, `favorite`, `hidden`, `aliases`), and optional `intercepts` for IFEO-based launch hooks. |
 
-## 3. The Execution Pipeline
+Optional metadata keys at the root or inside objects (`comment`, `description`) are ignored by the engine except where the Dashboard displays human text.
 
-To ensure dependencies are met without racing conditions, WorkspaceManager follows a strict, sequential execution pipeline. 
+## 2. Runtime components
 
-Arrays defined in the JSON configuration dictate the execution order. 
+| Component | Script(s) | Responsibility |
+|-----------|-----------|------------------|
+| Orchestrator | `Orchestrator.ps1` | Load JSON; sync IFEO interceptors when enabled; resolve **profile type**; run Start or Stop for `App_Workload`, `System_Mode`, or `Hardware_Override`. |
+| Workspace state | `WorkspaceState.ps1` | Compute physical state (services, PnP, registry, processes, refresh-rate heuristics) and compliance rows for the Dashboard. |
+| Dashboard | `Dashboard.ps1`, `Dashboard.Impl.ps1` | Four-tab TUI: workloads, system modes (when more than one mode exists), hardware compliance / overrides, settings and actions. Commits call the Orchestrator with optional `-ProfileType`. |
+| Interceptors | `Interceptor.ps1`, `InterceptorPoll.ps1`, `Interceptor.vbs` | When enabled, IFEO **Debugger** entries under `HKLM\...\Image File Execution Options` launch the wrapper; poll script brings up required services/executables before the real executable runs. |
+| Shortcuts | `Generate-Shortcuts.ps1` | Writes Start Menu `.lnk` files that invoke `pwsh` + `Orchestrator.ps1` for each **System Mode** name and each **App Workload** name (see [Configuration.md](Configuration.md)). Icons use `Assets\Dashboard.ico` when present. |
+| Dashboard launch | `Scripts\Run-Dashboard.cmd`, `Create-DashboardShortcut.ps1`, `Setup.cmd` | `Scripts\Run-Dashboard.cmd` changes to the repo root and runs `Dashboard.ps1` under `pwsh`. `Create-DashboardShortcut.ps1` creates a `.lnk` to that cmd file with optional `Assets\Dashboard.ico`. `Setup.cmd` creates a repo-root dashboard shortcut and optionally Desktop + Start Menu shortcuts. Optional Windows Terminal branding: [Windows-Terminal.md](Windows-Terminal.md). |
 
-### Transitioning to `Ready` (Starting)
-Execution flows **Left to Right** (Index 0 $\rightarrow$ Index N).
-1. **Services** are started sequentially (Left $\rightarrow$ Right).
-2. **Executables** are launched sequentially (Left $\rightarrow$ Right).
+## 3. States in the Dashboard
 
-### Transitioning to `Stopped` (Killing)
-Execution flows **Right to Left** (Index N $\rightarrow$ Index 0) to cleanly unwind dependencies.
-1. Engine checks RAM for **Protected Processes**. If found, execution halts and prompts the user.
-2. **Executables** are violently terminated sequentially (Right $\rightarrow$ Left).
-3. **Services** are stopped and disabled sequentially (Right $\rightarrow$ Left).
-4. **Reverse Relations** are executed.
+The UI uses **Active** / **Inactive** / **Mixed** for workloads and modes, and **ON** / **OFF** / **ANY** for hardware targets inside the active system mode. “Mixed” means measured state does not match the declared workload or mode.
 
-### Custom Execution Order (Roadmap Feature)
-While the default pipeline covers 95% of use cases, advanced Workspaces may require interwoven execution (e.g., Start Service A $\rightarrow$ Launch Executable 1 $\rightarrow$ Wait 5s $\rightarrow$ Start Service B). Future releases will support overriding the default pipeline with a custom, step-by-step execution array.
+Colors and symbols in the TUI follow the implementation in `Dashboard.Impl.ps1` (for example compliance ✓ vs violation vs queued override).
 
-## 4. Configuration Schema (`workspaces.json`)
+## 4. Orchestration model (high level)
+
+- **App workload:** Start = start each listed service, then launch each executable token; Stop = kill processes by executable leaf name (reverse order), then stop services. No merge of duplicate service names across workloads at commit time—operators should avoid conflicting profiles.
+- **System mode:** Start = set `power_plan` if present, then for each target set each `Hardware_Definitions` component to the target’s ON/OFF/ANY semantics; Stop = invert ON/OFF targets (ANY unchanged) and apply.
+- **Hardware override:** A single component from `Hardware_Definitions` is driven to ON or OFF (used when the Dashboard queues per-component overrides with `-ProfileType Hardware_Override`).
+
+Detailed ordering, parameters, and the `__SYNC_ONLY__` interceptor-only sync trick are documented in [Orchestrator-Flow.md](Orchestrator-Flow.md).
+
+## 5. Example shape (abbreviated)
 
 ```json
 {
-  "ArcGIS": {
-    "services": ["ArcGISLicenseService", "EsriCoreSvc"],
-    "executables": ["C:\\Program Files\\ArcGIS\\Pro\\bin\\ArcGISPro.exe"],
-    "protected_processes": ["ArcGISPro"],
-    "reverse_relations": []
+  "_config": {
+    "notifications": true,
+    "enable_interceptors": true,
+    "interceptor_poll_max_seconds": 15,
+    "shortcut_prefix_start": "!Start-",
+    "shortcut_prefix_stop": "!Stop-"
   },
-  "Gaming": {
-    "services": ["Steam Client Service", "EasyAntiCheat"],
-    "executables": ["D:\\Games\\Steam\\steam.exe"],
-    "protected_processes": ["Cyberpunk2077", "steam"],
-    "reverse_relations": ["WindowsDefenderSvc"]
+  "Hardware_Definitions": {
+    "Example_Service": {
+      "description": "Example",
+      "type": "service",
+      "name": "wuauserv"
+    }
+  },
+  "System_Modes": {
+    "Example_Mode": {
+      "description": "Example",
+      "power_plan": "Balanced",
+      "targets": {
+        "Example_Service": "ON"
+      }
+    }
+  },
+  "App_Workloads": {
+    "Dev": {
+      "MyTool": {
+        "description": "Tooling",
+        "services": ["SomeSvc"],
+        "executables": ["C:/Tools/MyTool.exe"],
+        "tags": ["dev"],
+        "priority": 10,
+        "favorite": false,
+        "hidden": false,
+        "aliases": []
+      }
+    }
   }
 }
 ```
+
+Field-by-field rules, execution tokens, and IFEO intercept schema are in [Configuration.md](Configuration.md). Operational caveats: [Edge-Cases.md](Edge-Cases.md). Doc ↔ code matrix: [Audit.md](Audit.md).
