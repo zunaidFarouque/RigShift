@@ -14,7 +14,7 @@ if (-not (Test-Path -LiteralPath $implPath)) {
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     $pwshCmd = Get-Command -Name "pwsh.exe" -ErrorAction SilentlyContinue
     if ($null -eq $pwshCmd) {
-        Write-Host "WorkspaceManager Dashboard requires PowerShell 7+ (pwsh.exe)." -ForegroundColor Red
+        Write-Host "RigShift Dashboard requires PowerShell 7+ (pwsh.exe)." -ForegroundColor Red
         Write-Host "Windows PowerShell cannot run this script. Install PowerShell 7 from https://aka.ms/powershell" -ForegroundColor Yellow
         if ($Host.Name -eq "ConsoleHost") {
             Write-Host ""
@@ -28,7 +28,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     # Explorer console plus Start-Process can leave pwsh without a usable console stdin,
     # so [Console]::KeyAvailable throws and the dashboard exits immediately.
     Set-Location -LiteralPath $PSScriptRoot
-    Write-Host "Starting WorkspaceManager dashboard (PowerShell 7)..." -ForegroundColor DarkGray
+    Write-Host "Starting RigShift dashboard (PowerShell 7)..." -ForegroundColor DarkGray
 
     $pwshArgs = @(
         "-NoProfile",
@@ -49,9 +49,9 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 
 try {
     if ($MyInvocation.InvocationName -ne ".") {
-        Set-Variable -Name WorkspaceManagerDashboardEntryBootstrap -Scope Global -Value $true
+        Set-Variable -Name RigShiftDashboardEntryBootstrap -Scope Global -Value $true
     }
     . $implPath @PSBoundParameters
 } finally {
-    Remove-Variable -Name WorkspaceManagerDashboardEntryBootstrap -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name RigShiftDashboardEntryBootstrap -Scope Global -ErrorAction SilentlyContinue
 }

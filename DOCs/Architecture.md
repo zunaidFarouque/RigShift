@@ -1,8 +1,8 @@
-# WorkspaceManager: Architecture and Nomenclature
+# RigShift: Architecture and Nomenclature
 
-WorkspaceManager is a declarative Windows state tool. You describe **what should be true** on the machine—services, apps, power plan, registry, PnP devices, and optional launch interception—in `workspaces.json`. The **Orchestrator** applies changes; the **Dashboard** inspects state and batches commits; **Interceptors** optionally prime workloads before selected executables run.
+RigShift is a declarative Windows state tool. You describe **what should be true** on the machine—services, apps, power plan, registry, PnP devices, and optional launch interception—in `workspaces.json`. The **Orchestrator** applies changes; the **Dashboard** inspects state and batches commits; **Interceptors** optionally prime workloads before selected executables run.
 
-**Naming:** User-facing strings (toasts, window titles, Start Menu folder) use **WorkspaceManager**. Managed IFEO registry values include `WorkspaceManager_Owner`, which is set to the fixed literal **`BG-Services-Orchestrator`** in `Orchestrator.ps1` so cleanup only touches hooks owned by this deployment (see [Edge-Cases.md](Edge-Cases.md)).
+**Naming:** User-facing strings (toasts, window titles, Start Menu folder) use **RigShift**. Managed IFEO registry values include `RigShift_Owner`, which is set to the fixed literal **`BG-Services-Orchestrator`** in `Orchestrator.ps1` so cleanup only touches hooks owned by this deployment (see [Edge-Cases.md](Edge-Cases.md)).
 
 The full JSON contract lives in [Configuration.md](Configuration.md). For the readme's collapsible cross-link index, start from [_schema.md](_schema.md).
 

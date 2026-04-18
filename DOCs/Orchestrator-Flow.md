@@ -25,7 +25,7 @@ This document matches `Orchestrator.ps1` as shipped. Parameters and order matter
 
 If `-SkipInterceptorSync` is **not** set:
 
-- When `enable_interceptors` is `$false`, managed keys under `HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options` that carry `WorkspaceManager_Managed = 1` and matching `WorkspaceManager_Owner` equal to **`BG-Services-Orchestrator`** are cleaned (Debugger and WorkspaceManager metadata removed). Keys owned by another tag are left intact.
+- When `enable_interceptors` is `$false`, managed keys under `HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options` that carry `RigShift_Managed = 1` and matching `RigShift_Owner` equal to **`BG-Services-Orchestrator`** are cleaned (Debugger and RigShift metadata removed). Keys owned by another tag are left intact.
 - When `enable_interceptors` is `$true`, hooks are written for each intercept rule on each app workload (see [Configuration.md](Configuration.md) intercepts section). A small `Scripts\Interceptor.vbs` wrapper path is stored in the Debugger value.
 
 Console prints a one-line summary of adds or removals.

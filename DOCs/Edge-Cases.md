@@ -38,13 +38,13 @@ The Dashboard requires interactive **console** key input. Remote sessions, piped
 
 ## 6. Windows Search and Start Menu shortcuts
 
-Shortcuts live under `%APPDATA%\Microsoft\Windows\Start Menu\Programs\WorkspaceManager`. Bulk delete/recreate can confuse indexing briefly.
+Shortcuts live under `%APPDATA%\Microsoft\Windows\Start Menu\Programs\RigShift`. Bulk delete/recreate can confuse indexing briefly.
 
 **Mitigation:** Run `Generate-Shortcuts.ps1` when profiles are stable; allow indexing to catch up before relying on PowerToys Run.
 
 ## 7. IFEO and security software
 
-Managed IFEO keys are tagged with `WorkspaceManager_Managed` and `WorkspaceManager_Owner`. **Cleanup only removes hooks whose owner matches the literal `BG-Services-Orchestrator`** string baked into `Orchestrator.ps1`. If you fork the project and change that tag, machines with mixed builds may leave stale or “foreign” managed keys until you align versions and owner values.
+Managed IFEO keys are tagged with `RigShift_Managed` and `RigShift_Owner`. **Cleanup only removes hooks whose owner matches the literal `BG-Services-Orchestrator`** string baked into `Orchestrator.ps1`. If you fork the project and change that tag, machines with mixed builds may leave stale or “foreign” managed keys until you align versions and owner values.
 
 Third-party security tools may still flag Debugger-based redirection.
 
@@ -52,7 +52,7 @@ Third-party security tools may still flag Debugger-based redirection.
 
 ### Optional escape hatch (advanced)
 
-If environment variable **`WorkspaceManager_InterceptorBypass=1`** is set in the process environment when `Interceptor.ps1` runs, the script launches the target executable immediately without readiness polling or workload activation. Intended for troubleshooting only; not a supported configuration surface in `workspaces.json`.
+If environment variable **`RigShift_InterceptorBypass=1`** is set in the process environment when `Interceptor.ps1` runs, the script launches the target executable immediately without readiness polling or workload activation. Intended for troubleshooting only; not a supported configuration surface in `workspaces.json`.
 
 ---
 

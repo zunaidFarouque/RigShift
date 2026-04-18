@@ -1,14 +1,14 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-Creates a double-clickable shortcut (with custom icon) to the WorkspaceManager dashboard.
+Creates a double-clickable shortcut (with custom icon) to the RigShift dashboard.
 
 .DESCRIPTION
 Windows .cmd files cannot show a custom Explorer icon. This script writes a .lnk that
 targets Scripts/Run-Dashboard.cmd and uses Assets/Dashboard.ico when present.
 
 .PARAMETER ShortcutPath
-Full path to the .lnk file to create. Default: Desktop\Workspace Manager Dashboard.lnk
+Full path to the .lnk file to create. Default: Desktop\RigShift Dashboard.lnk
 #>
 [CmdletBinding()]
 param(
@@ -29,7 +29,7 @@ $iconFallback = (Get-Command -Name "pwsh.exe" -ErrorAction Stop).Source
 
 if ([string]::IsNullOrWhiteSpace($ShortcutPath)) {
     $desktop = [Environment]::GetFolderPath("Desktop")
-    $ShortcutPath = Join-Path -Path $desktop -ChildPath "Workspace Manager Dashboard.lnk"
+    $ShortcutPath = Join-Path -Path $desktop -ChildPath "RigShift Dashboard.lnk"
 }
 
 if (-not (Test-Path -LiteralPath $iconIco)) {
@@ -44,7 +44,7 @@ $shortcut = $wsh.CreateShortcut($ShortcutPath)
 $shortcut.TargetPath = $launcher
 $shortcut.WorkingDirectory = $repoRoot
 $shortcut.IconLocation = $iconLocation
-$shortcut.Description = "WorkspaceManager interactive dashboard (PowerShell 7)"
+$shortcut.Description = "RigShift interactive dashboard (PowerShell 7)"
 $shortcut.Save()
 
 Write-Host "[ SUCCESS ] Shortcut created:" -ForegroundColor Green

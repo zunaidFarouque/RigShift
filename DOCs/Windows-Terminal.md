@@ -1,6 +1,6 @@
-# WorkspaceManager in Windows Terminal
+# RigShift in Windows Terminal
 
-Use this when you want the Dashboard (or orchestrator) to show **WorkspaceManager** branding on the tab and taskbar while running under [Windows Terminal](https://github.com/microsoft/terminal), instead of the default `pwsh.exe` icon.
+Use this when you want the Dashboard (or orchestrator) to show **RigShift** branding on the tab and taskbar while running under [Windows Terminal](https://github.com/microsoft/terminal), instead of the default `pwsh.exe` icon.
 
 ## Prerequisites
 
@@ -18,21 +18,21 @@ Add a profile under `profiles.list` (or merge into your existing `profiles` obje
 
 ## Example profile (Dashboard)
 
-Replace `D:\path\to\WorkspaceManager` with your repository root. The `icon` path must point at `Assets\Dashboard.ico` in that root.
+Replace `D:\path\to\RigShift` with your repository root. The `icon` path must point at `Assets\Dashboard.ico` in that root.
 
 ```json
 {
-  "name": "WorkspaceManager Dashboard",
-  "commandline": "pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"D:\\path\\to\\WorkspaceManager\\Scripts\\Dashboard.ps1\"",
-  "startingDirectory": "D:\\path\\to\\WorkspaceManager",
-  "icon": "D:\\path\\to\\WorkspaceManager\\Assets\\Dashboard.ico"
+  "name": "RigShift Dashboard",
+  "commandline": "pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"D:\\path\\to\\RigShift\\Scripts\\Dashboard.ps1\"",
+  "startingDirectory": "D:\\path\\to\\RigShift",
+  "icon": "D:\\path\\to\\RigShift\\Assets\\Dashboard.ico"
 }
 ```
 
 Alternative `commandline` using the repo launcher (same `startingDirectory`):
 
 ```json
-"commandline": "cmd.exe /c \"D:\\path\\to\\WorkspaceManager\\Scripts\\Run-Dashboard.cmd\""
+"commandline": "cmd.exe /c \"D:\\path\\to\\RigShift\\Scripts\\Run-Dashboard.cmd\""
 ```
 
 ## Team distribution

@@ -1,4 +1,4 @@
-# WorkspaceManager Dashboard (`Dashboard.ps1`)
+# RigShift Dashboard (`Dashboard.ps1`)
 
 The Dashboard is an interactive PowerShell console UI for inspecting compliance, editing `_config`, staging workload and mode changes, and committing them through `Orchestrator.ps1`.
 
@@ -26,9 +26,9 @@ Optional parameters (passed through to `Dashboard.Impl.ps1`):
 
 ### Desktop shortcut with icon
 
-`Create-DashboardShortcut.ps1` writes a `.lnk` that targets `Scripts\Run-Dashboard.cmd` and uses `Assets\Dashboard.ico` when present. Default shortcut path is the user Desktop (`Workspace Manager Dashboard.lnk`). Override with `-ShortcutPath`.
+`Create-DashboardShortcut.ps1` writes a `.lnk` that targets `Scripts\Run-Dashboard.cmd` and uses `Assets\Dashboard.ico` when present. Default shortcut path is the user Desktop (`RigShift Dashboard.lnk`). Override with `-ShortcutPath`.
 
-`Setup.cmd` (repository root) always creates `Workspace Manager Dashboard.lnk` in the project root first, then offers optional Desktop and Start Menu shortcut generation.
+`Setup.cmd` (repository root) always creates `RigShift Dashboard.lnk` in the project root first, then offers optional Desktop and Start Menu shortcut generation.
 
 For a **custom icon while the dashboard runs** (tab and taskbar under Windows Terminal), add a profile with `icon` pointing at the same `.ico` file—see [Windows-Terminal.md](Windows-Terminal.md).
 
@@ -105,7 +105,7 @@ Defined actions come from `Get-DashboardActionDefinitions` in `Dashboard.Impl.ps
 - **Enter** arms confirmation (`Confirm: Enter`); **Enter** again on the same row runs the action.
 - If settings rows have **pending edits**, actions are blocked until settings are committed or reverted (exclusive flow).
 
-`Reset_Interceptors` forces `enable_interceptors = false` in JSON, re-syncs IFEO hooks through the orchestrator path, and tears down helper processes for `Interceptor.ps1` / `InterceptorPoll.ps1`, only touching keys marked `WorkspaceManager_Managed`.
+`Reset_Interceptors` forces `enable_interceptors = false` in JSON, re-syncs IFEO hooks through the orchestrator path, and tears down helper processes for `Interceptor.ps1` / `InterceptorPoll.ps1`, only touching keys marked `RigShift_Managed`.
 
 Footer: `[Space] Edit Setting | [Right] Edit | [Left or +/-] Poll Seconds | [Enter] Commit/Confirm Action | Actions are exclusive`.
 

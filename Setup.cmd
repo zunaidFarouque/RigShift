@@ -12,8 +12,8 @@ if errorlevel 1 (
 
 set "CREATE_SHORTCUT_SCRIPT=%~dp0Scripts\Create-DashboardShortcut.ps1"
 set "GENERATE_SHORTCUTS_SCRIPT=%~dp0Scripts\Generate-Shortcuts.ps1"
-set "ROOT_SHORTCUT=%~dp0Workspace Manager Dashboard.lnk"
-set "ROOT_CONFIG_SHORTCUT=%~dp0Workspace Manager Config.lnk"
+set "ROOT_SHORTCUT=%~dp0RigShift Dashboard.lnk"
+set "ROOT_CONFIG_SHORTCUT=%~dp0RigShift Config.lnk"
 set "WORKSPACES_JSON=%~dp0Scripts\workspaces.json"
 
 echo [SETUP] Creating project-root dashboard shortcut...
@@ -21,7 +21,7 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "%CREATE_SHORTCUT_SCRIPT%" -Sh
 if errorlevel 1 goto :capture_fail
 
 echo [SETUP] Creating project-root workspaces shortcut...
-pwsh.exe -NoProfile -Command "$ws='%WORKSPACES_JSON%'; $lnk='%ROOT_CONFIG_SHORTCUT%'; if (-not (Test-Path -LiteralPath $ws)) { throw \"Missing workspaces.json at '$ws'.\" }; $w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut($lnk); $s.TargetPath=$ws; $s.WorkingDirectory=Split-Path -Path $ws -Parent; $s.Description='WorkspaceManager configuration (workspaces.json)'; $s.Save()"
+pwsh.exe -NoProfile -Command "$ws='%WORKSPACES_JSON%'; $lnk='%ROOT_CONFIG_SHORTCUT%'; if (-not (Test-Path -LiteralPath $ws)) { throw \"Missing workspaces.json at '$ws'.\" }; $w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut($lnk); $s.TargetPath=$ws; $s.WorkingDirectory=Split-Path -Path $ws -Parent; $s.Description='RigShift configuration (workspaces.json)'; $s.Save()"
 if errorlevel 1 goto :capture_fail
 
 set "DESKTOP_ON=1"

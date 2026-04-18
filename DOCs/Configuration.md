@@ -1,4 +1,4 @@
-# WorkspaceManager: configuration reference
+# RigShift: configuration reference
 
 This file tracks **what the current PowerShell implementation reads** from `workspaces.json`. For execution order and parameters, see [Orchestrator-Flow.md](Orchestrator-Flow.md).
 
@@ -141,7 +141,7 @@ Interceptors are synced from JSON when `enable_interceptors` is `true`. Rules ma
        - `requires.services` — if the property is **omitted**, **no** services are required for readiness (not the workload default).
        - `requires.executables` — if the property is **omitted**, **no** executables are required for readiness (not the workload default).
 
-IFEO keys are stamped with `WorkspaceManager_Managed`, `WorkspaceManager_Owner`, `WorkspaceManager_InterceptorVersion`, and `WorkspaceManager_LastSyncedUtc`. Managed cleanup compares `WorkspaceManager_Owner` to the fixed tag **`BG-Services-Orchestrator`** in `Orchestrator.ps1` (forks that change the tag must keep docs and deployed machines consistent).
+IFEO keys are stamped with `RigShift_Managed`, `RigShift_Owner`, `RigShift_InterceptorVersion`, and `RigShift_LastSyncedUtc`. Managed cleanup compares `RigShift_Owner` to the fixed tag **`BG-Services-Orchestrator`** in `Orchestrator.ps1` (forks that change the tag must keep docs and deployed machines consistent).
 
 ---
 
@@ -176,7 +176,7 @@ Use doubled backslashes or forward slashes in JSON string values.
 
 ## `Generate-Shortcuts.ps1` behavior
 
-1. Clears existing `*.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\WorkspaceManager`.
+1. Clears existing `*.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\RigShift`.
 2. Emits one Start and/or Stop shortcut per:
    - each **System_Modes** child name;
    - each **App_Workloads** leaf workload name (across all domains).

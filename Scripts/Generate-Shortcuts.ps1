@@ -33,7 +33,7 @@ if ($null -ne $configObject) {
     }
 }
 
-$shortcutDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\WorkspaceManager"
+$shortcutDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\RigShift"
 if (-not (Test-Path -Path $shortcutDir -PathType Container)) {
     New-Item -ItemType Directory -Path $shortcutDir -Force | Out-Null
 }

@@ -24,7 +24,7 @@ Legend: **Pass** = matches code; **Doc updated** = fixed in same change set as t
 | Dashboard.md — Tab 4 actions | Only `Reset_Interceptors` in `Get-DashboardActionDefinitions` | `Dashboard.Impl.ps1` (~968–978) | Doc updated |
 | Dashboard.md — params | `AutoCommitWorkloadName`, `ObserveWorkloadName`, `ObserveSeconds` | `Dashboard.ps1` (~1–5) | Pass |
 | Edge-Cases.md — IFEO | Owner-scoped cleanup + hardcoded tag | `Orchestrator.ps1` (~338–357) | Doc updated |
-| Edge-Cases.md — bypass env | Optional `WorkspaceManager_InterceptorBypass` | `Interceptor.ps1` (~549–551) | Doc updated (optional) |
+| Edge-Cases.md — bypass env | Optional `RigShift_InterceptorBypass` | `Interceptor.ps1` (~549–551) | Doc updated (optional) |
 
 ## Tests as contracts
 

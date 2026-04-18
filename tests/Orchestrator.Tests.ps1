@@ -342,10 +342,10 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
 
         (@($decodedCalls | Where-Object { $_ -match 'New-Item -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "Debugger"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Managed" -Value "1"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Owner" -Value "BG-Services-Orchestrator"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_InterceptorVersion" -Value "1"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_LastSyncedUtc"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_Managed" -Value "1"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_Owner" -Value "BG-Services-Orchestrator"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_InterceptorVersion" -Value "1"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_LastSyncedUtc"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'Image File Execution Options\\EXCEL\.EXE' })).Count | Should -BeGreaterThan 0
 
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
@@ -378,11 +378,11 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         Mock -CommandName Get-ItemProperty -MockWith {
             param([string]$Path, [string]$Name)
             if ($Path -match 'WINWORD\.EXE$') {
-                if ($Name -eq "WorkspaceManager_Managed") {
-                    return [pscustomobject]@{ WorkspaceManager_Managed = "1" }
+                if ($Name -eq "RigShift_Managed") {
+                    return [pscustomobject]@{ RigShift_Managed = "1" }
                 }
-                if ($Name -eq "WorkspaceManager_Owner") {
-                    return [pscustomobject]@{ WorkspaceManager_Owner = "BG-Services-Orchestrator" }
+                if ($Name -eq "RigShift_Owner") {
+                    return [pscustomobject]@{ RigShift_Owner = "BG-Services-Orchestrator" }
                 }
                 return [pscustomobject]@{}
             }
@@ -400,10 +400,10 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         )
 
         (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "Debugger"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Managed"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_Owner"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_InterceptorVersion"' })).Count | Should -Be 1
-        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "WorkspaceManager_LastSyncedUtc"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_Managed"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_Owner"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_InterceptorVersion"' })).Count | Should -Be 1
+        (@($decodedCalls | Where-Object { $_ -match 'Remove-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\WINWORD\.EXE" -Name "RigShift_LastSyncedUtc"' })).Count | Should -Be 1
         (@($decodedCalls | Where-Object { $_ -match 'notepad\.exe' })).Count | Should -Be 0
 
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
@@ -432,8 +432,8 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         }
         Mock -CommandName Get-ItemProperty -MockWith {
             param([string]$Path, [string]$Name)
-            if ($Name -eq "WorkspaceManager_Managed") {
-                return [pscustomobject]@{ WorkspaceManager_Managed = "1" }
+            if ($Name -eq "RigShift_Managed") {
+                return [pscustomobject]@{ RigShift_Managed = "1" }
             }
             return $null
         }
@@ -475,11 +475,11 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         }
         Mock -CommandName Get-ItemProperty -MockWith {
             param([string]$Path, [string]$Name)
-            if ($Name -eq "WorkspaceManager_Managed") {
-                return [pscustomobject]@{ WorkspaceManager_Managed = "1" }
+            if ($Name -eq "RigShift_Managed") {
+                return [pscustomobject]@{ RigShift_Managed = "1" }
             }
-            if ($Name -eq "WorkspaceManager_Owner") {
-                return [pscustomobject]@{ WorkspaceManager_Owner = "AnotherOwner" }
+            if ($Name -eq "RigShift_Owner") {
+                return [pscustomobject]@{ RigShift_Owner = "AnotherOwner" }
             }
             return $null
         }

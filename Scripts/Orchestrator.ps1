@@ -56,7 +56,7 @@ if (-not (Get-Command -Name Show-Notification -CommandType Function -ErrorAction
             $xmlDoc = New-Object Windows.Data.Xml.Dom.XmlDocument
             $xmlDoc.LoadXml($xmlPayload)
             $toast = [Windows.UI.Notifications.ToastNotification]::new($xmlDoc)
-            $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("WorkspaceManager")
+            $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("RigShift")
             $notifier.Show($toast)
         } catch {
             return
@@ -358,20 +358,20 @@ function Sync-Interceptors {
         $removedCount = 0
         $existingKeys = @(Get-ChildItem -Path $ifeoRoot -ErrorAction SilentlyContinue)
         foreach ($key in $existingKeys) {
-            $managed = Get-ItemProperty -Path $key.PSPath -Name "WorkspaceManager_Managed" -ErrorAction SilentlyContinue
-            if ($null -eq $managed -or [string]$managed.WorkspaceManager_Managed -ne "1") {
+            $managed = Get-ItemProperty -Path $key.PSPath -Name "RigShift_Managed" -ErrorAction SilentlyContinue
+            if ($null -eq $managed -or [string]$managed.RigShift_Managed -ne "1") {
                 continue
             }
-            $owner = Get-ItemProperty -Path $key.PSPath -Name "WorkspaceManager_Owner" -ErrorAction SilentlyContinue
+            $owner = Get-ItemProperty -Path $key.PSPath -Name "RigShift_Owner" -ErrorAction SilentlyContinue
             if ($null -ne $owner -and
-                $null -ne $owner.PSObject.Properties["WorkspaceManager_Owner"] -and
-                -not [string]::IsNullOrWhiteSpace([string]$owner.WorkspaceManager_Owner) -and
-                [string]$owner.WorkspaceManager_Owner -ne $ownerTag) {
+                $null -ne $owner.PSObject.Properties["RigShift_Owner"] -and
+                -not [string]::IsNullOrWhiteSpace([string]$owner.RigShift_Owner) -and
+                [string]$owner.RigShift_Owner -ne $ownerTag) {
                 continue
             }
 
             $escapedPath = ($ifeoRoot + "\" + $key.PSChildName).Replace('"', '""')
-            Invoke-ElevatedPowerShell -Command "Remove-ItemProperty -Path `"$escapedPath`" -Name `"Debugger`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_Managed`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_Owner`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_InterceptorVersion`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"WorkspaceManager_LastSyncedUtc`" -ErrorAction SilentlyContinue"
+            Invoke-ElevatedPowerShell -Command "Remove-ItemProperty -Path `"$escapedPath`" -Name `"Debugger`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"RigShift_Managed`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"RigShift_Owner`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"RigShift_InterceptorVersion`" -ErrorAction SilentlyContinue; Remove-ItemProperty -Path `"$escapedPath`" -Name `"RigShift_LastSyncedUtc`" -ErrorAction SilentlyContinue"
             $removedCount++
         }
         return [pscustomobject]@{
@@ -415,10 +415,10 @@ function Sync-Interceptors {
                 $command = @"
 New-Item -Path "$ifeoPath" -Force | Out-Null
 New-ItemProperty -Path "$ifeoPath" -Name "Debugger" -Value "$debuggerValue" -PropertyType String -Force | Out-Null
-New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_Managed" -Value "1" -PropertyType String -Force | Out-Null
-New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_Owner" -Value "$ownerTag" -PropertyType String -Force | Out-Null
-New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_InterceptorVersion" -Value "$versionTag" -PropertyType String -Force | Out-Null
-New-ItemProperty -Path "$ifeoPath" -Name "WorkspaceManager_LastSyncedUtc" -Value "$syncStamp" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$ifeoPath" -Name "RigShift_Managed" -Value "1" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$ifeoPath" -Name "RigShift_Owner" -Value "$ownerTag" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$ifeoPath" -Name "RigShift_InterceptorVersion" -Value "$versionTag" -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$ifeoPath" -Name "RigShift_LastSyncedUtc" -Value "$syncStamp" -PropertyType String -Force | Out-Null
 "@
                 Invoke-ElevatedPowerShell -Command $command
                 $addedCount++

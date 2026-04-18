@@ -7,7 +7,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$Host.UI.RawUI.WindowTitle = "WorkspaceManager Dashboard"
+$Host.UI.RawUI.WindowTitle = "RigShift Dashboard"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 . (Join-Path -Path $PSScriptRoot -ChildPath "WorkspaceState.ps1")
@@ -873,7 +873,7 @@ function Get-DashboardSettingsDefinitions {
 
     return @(
         [pscustomobject]@{ Key = "console_style"; Type = "choice"; Choices = @("Normal", "Compact"); Min = $null; Example = "Example: Normal = full spacing, Compact = tighter output."; Description = "Controls how much spacing/detail the console UI shows." }
-        [pscustomobject]@{ Key = "enable_interceptors"; Type = "bool"; Choices = @(); Min = $null; Example = "Example: true = interceptor hooks are managed, false = managed hooks are cleaned."; Description = "Enable or disable executable interceptors managed by WorkspaceManager." }
+        [pscustomobject]@{ Key = "enable_interceptors"; Type = "bool"; Choices = @(); Min = $null; Example = "Example: true = interceptor hooks are managed, false = managed hooks are cleaned."; Description = "Enable or disable executable interceptors managed by RigShift." }
         [pscustomobject]@{ Key = "notifications"; Type = "bool"; Choices = @(); Min = $null; Example = "Example: true shows `"Workspace Ready`" toast after commits."; Description = "Show Windows toast notifications for dashboard/orchestrator actions." }
         [pscustomobject]@{ Key = "interceptor_poll_max_seconds"; Type = "int"; Choices = @(); Min = 1; Example = "Example: 15 waits up to 15 seconds before timing out."; Description = "Maximum seconds an interceptor waits for required service/process readiness." }
         [pscustomobject]@{ Key = "shortcut_prefix_start"; Type = "string"; Choices = @(); Min = $null; Example = "Example: !Start- creates names like !Start-Office.lnk"; Description = "Prefix used when generating Start shortcut names." }
@@ -1692,7 +1692,7 @@ function Start-DashboardAutoCommit {
     $selected[0].DesiredState = "Active"
 
     Invoke-SafeClearHost
-    Write-Host "=== WORKSPACEMANAGER DASHBOARD ==="
+    Write-Host "=== RIGSHIFT DASHBOARD ==="
     Write-Host ""
     Write-Host ("Auto-enabling workload: {0}" -f $WorkloadName) -ForegroundColor Cyan
     Write-Host "Committing state changes..."
@@ -1824,7 +1824,7 @@ function Start-Dashboard {
 
         if ($needsRedraw) {
             Invoke-SafeClearHost
-            Write-Host "=== WORKSPACEMANAGER DASHBOARD ==="
+            Write-Host "=== RIGSHIFT DASHBOARD ==="
             Write-Host " "
             Write-TabHeader -CurrentTab $CurrentTab -HasMultipleModes $script:HasMultipleModes
             Write-Host ""
@@ -2078,7 +2078,7 @@ function Start-Dashboard {
                         if ((Test-DashboardTab4RowIsSetting -Row $selected) -and ($selected.Type -eq "string" -or $selected.Type -eq "int")) {
                             try {
                                 Invoke-SafeClearHost
-                                Write-Host "=== WORKSPACEMANAGER SETTINGS ==="
+                                Write-Host "=== RIGSHIFT SETTINGS ==="
                                 Write-Host ""
                                 Write-Host ("Editing: {0}" -f [string]$selected.Key) -ForegroundColor Cyan
                                 Write-Host ([string]$selected.Description) -ForegroundColor DarkGray
@@ -2127,7 +2127,7 @@ function Start-Dashboard {
                     if ($CurrentTab -eq 1) {
                         try {
                             Invoke-SafeClearHost
-                            Write-Host "=== WORKSPACEMANAGER WORKLOAD SEARCH ==="
+                            Write-Host "=== RIGSHIFT WORKLOAD SEARCH ==="
                             Write-Host ""
                             Write-Host "Filter by workload name, domain, alias, or tag." -ForegroundColor DarkGray
                             Write-Host "Enter = apply, Esc = cancel." -ForegroundColor DarkGray
@@ -2191,7 +2191,7 @@ function Start-Dashboard {
                             }
                             if ($decision.Decision -eq "BlockedByPendingSettings") {
                                 Invoke-SafeClearHost
-                                Write-Host "=== WORKSPACEMANAGER ACTION BLOCKED ==="
+                                Write-Host "=== RIGSHIFT ACTION BLOCKED ==="
                                 Write-Host ""
                                 Write-Host $decision.Message -ForegroundColor Yellow
                                 Write-Host ""
@@ -2204,7 +2204,7 @@ function Start-Dashboard {
                             if ($decision.Decision -eq "ExecuteAction") {
                                 $orchestratorPath = Join-Path -Path $PSScriptRoot -ChildPath "Orchestrator.ps1"
                                 Invoke-SafeClearHost
-                                Write-Host "=== WORKSPACEMANAGER ACTION ==="
+                                Write-Host "=== RIGSHIFT ACTION ==="
                                 Write-Host ""
                                 Write-Host ("Running action: {0}" -f [string]$selected.Key) -ForegroundColor Cyan
                                 try {
@@ -2283,7 +2283,7 @@ function Start-Dashboard {
 
 $dashboardShouldAutoStart = ($MyInvocation.InvocationName -ne ".")
 if (-not $dashboardShouldAutoStart) {
-    $bootstrapVar = Get-Variable -Name WorkspaceManagerDashboardEntryBootstrap -Scope Global -ErrorAction SilentlyContinue
+    $bootstrapVar = Get-Variable -Name RigShiftDashboardEntryBootstrap -Scope Global -ErrorAction SilentlyContinue
     if ($null -ne $bootstrapVar -and [bool]$bootstrapVar.Value) {
         $dashboardShouldAutoStart = $true
     }

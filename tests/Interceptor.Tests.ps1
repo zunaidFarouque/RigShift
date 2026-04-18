@@ -6,12 +6,12 @@ Describe "Interceptor workload resolution and flow" {
         $script:repoRoot = Split-Path -Path $basePath -Parent
         $script:scriptsDir = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
         . (Join-Path -Path $script:scriptsDir -ChildPath "Interceptor.ps1")
-        $env:WorkspaceManager_InProcPolling = "1"
+        $env:RigShift_InProcPolling = "1"
     }
 
     BeforeEach {
-        $env:WorkspaceManager_InterceptorBypass = $null
-        $env:WorkspaceManager_InProcPolling = "1"
+        $env:RigShift_InterceptorBypass = $null
+        $env:RigShift_InProcPolling = "1"
         # App_Workloads must be nested Domain.WorkloadName per Get-AppWorkloadEntries / real workspaces.json.
         $script:workspaces = [pscustomobject]@{
             App_Workloads = [pscustomobject]@{
@@ -171,8 +171,8 @@ Describe "Interceptor workload resolution and flow" {
         Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
     }
 
-    It "bypasses prompting when WorkspaceManager_InterceptorBypass=1" {
-        $env:WorkspaceManager_InterceptorBypass = "1"
+    It "bypasses prompting when RigShift_InterceptorBypass=1" {
+        $env:RigShift_InterceptorBypass = "1"
 
         Mock -CommandName Start-RuleActivationFlow -MockWith { }
         Mock -CommandName Show-InterceptorPrompt -MockWith { "Yes" }
@@ -187,7 +187,7 @@ Describe "Interceptor workload resolution and flow" {
             $FilePath -eq "C:/Program Files/Microsoft Office/root/Office16/WINWORD.EXE"
         }
 
-        $env:WorkspaceManager_InterceptorBypass = $null
+        $env:RigShift_InterceptorBypass = $null
     }
 
     It "waits for required-only activation before launching when user selects No" {
@@ -218,7 +218,7 @@ Describe "Interceptor workload resolution and flow" {
         $script:ActivationWaitTimeoutSeconds = 0
         $script:ActivationPollIntervalSeconds = 0
 
-        $env:WorkspaceManager_InterceptorBypass = $null
+        $env:RigShift_InterceptorBypass = $null
 
         Mock -CommandName Get-InterceptorWorkspaces -MockWith { $script:workspaces }
         Mock -CommandName Start-RuleActivationFlow -MockWith { }
@@ -233,7 +233,7 @@ Describe "Interceptor workload resolution and flow" {
     }
 
     It "spawns InterceptorPoll worker in spawn mode with max seconds and poll marker" {
-        $env:WorkspaceManager_InProcPolling = "0"
+        $env:RigShift_InProcPolling = "0"
 
         $script:ActivationWaitTimeoutSeconds = 30
         $script:ActivationPollIntervalSeconds = 1
@@ -283,7 +283,7 @@ Describe "Interceptor workload resolution and flow" {
         $workerArgString | Should -Match "InterceptorPoll\.ps1"
         $workerArgString | Should -Match '-MaxSeconds\s+15'
         $workerArgString | Should -Match '-WorkloadName\s+Office'
-        $workerArgString | Should -Match '-PollMarker\s+WorkspaceManager_InterceptorPoll'
+        $workerArgString | Should -Match '-PollMarker\s+RigShift_InterceptorPoll'
 
         # next BeforeEach will restore in-proc defaults
     }

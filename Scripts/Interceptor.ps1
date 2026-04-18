@@ -258,7 +258,7 @@ FULL workload (Yes):
     # Yes => FULL, No => REQUIRED-only, Cancel => decline.
     $result = [System.Windows.Forms.MessageBox]::Show(
         $message,
-        "WorkspaceManager",
+        "RigShift",
         [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
         [System.Windows.Forms.MessageBoxIcon]::Question,
         [System.Windows.Forms.MessageBoxDefaultButton]::Button2 # Button2 == "No"
@@ -406,7 +406,7 @@ function Invoke-InterceptorReadinessPoll {
 
     $pollIntervalSeconds = [int]$script:ActivationPollIntervalSeconds
 
-    if ([string]$env:WorkspaceManager_InProcPolling -eq "1") {
+    if ([string]$env:RigShift_InProcPolling -eq "1") {
         return (Wait-ForInterceptorRuleActive `
             -RequiredServices $RequiredServices `
             -RequiredExecutables $RequiredExecutables `
@@ -423,7 +423,7 @@ function Invoke-InterceptorReadinessPoll {
         "-ExecutionPolicy", "Bypass",
         "-File", $pollScriptPath,
         "-WorkloadName", $WorkloadName,
-        "-PollMarker", "WorkspaceManager_InterceptorPoll",
+        "-PollMarker", "RigShift_InterceptorPoll",
         "-MaxSeconds", $effectiveMaxSeconds.ToString(),
         "-PollIntervalSeconds", $pollIntervalSeconds.ToString(),
         "-RequiredServicesJson", $requiredServicesJson,
@@ -472,7 +472,7 @@ function Invoke-WithManagedIfeoTemporarilyDisabled {
         $props = Get-ItemProperty -Path $ifeoPath -ErrorAction SilentlyContinue
         if ($null -ne $props) {
             $debuggerValue = [string]$props.Debugger
-            $managedValue = [string]$props.WorkspaceManager_Managed
+            $managedValue = [string]$props.RigShift_Managed
             $managedHook = (-not [string]::IsNullOrWhiteSpace($debuggerValue) -and $managedValue -eq "1")
         }
     } catch {
@@ -488,8 +488,8 @@ function Invoke-WithManagedIfeoTemporarilyDisabled {
     $escapedDebugger = $debuggerValue.Replace("'", "''")
     $escapedManaged = $managedValue.Replace("'", "''")
 
-    $disableCmd = "Remove-ItemProperty -Path '$escapedPath' -Name 'Debugger' -ErrorAction SilentlyContinue; Remove-ItemProperty -Path '$escapedPath' -Name 'WorkspaceManager_Managed' -ErrorAction SilentlyContinue"
-    $restoreCmd = "New-Item -Path '$escapedPath' -Force | Out-Null; New-ItemProperty -Path '$escapedPath' -Name 'Debugger' -Value '$escapedDebugger' -PropertyType String -Force | Out-Null; New-ItemProperty -Path '$escapedPath' -Name 'WorkspaceManager_Managed' -Value '$escapedManaged' -PropertyType String -Force | Out-Null"
+    $disableCmd = "Remove-ItemProperty -Path '$escapedPath' -Name 'Debugger' -ErrorAction SilentlyContinue; Remove-ItemProperty -Path '$escapedPath' -Name 'RigShift_Managed' -ErrorAction SilentlyContinue"
+    $restoreCmd = "New-Item -Path '$escapedPath' -Force | Out-Null; New-ItemProperty -Path '$escapedPath' -Name 'Debugger' -Value '$escapedDebugger' -PropertyType String -Force | Out-Null; New-ItemProperty -Path '$escapedPath' -Name 'RigShift_Managed' -Value '$escapedManaged' -PropertyType String -Force | Out-Null"
 
     try {
         gsudo pwsh.exe -NoProfile -Command $disableCmd 2>&1 | Out-Null
@@ -546,7 +546,7 @@ function Invoke-Interceptor {
         [string[]]$TargetArgs = @()
     )
 
-    if ([string]$env:WorkspaceManager_InterceptorBypass -eq "1") {
+    if ([string]$env:RigShift_InterceptorBypass -eq "1") {
         Start-InterceptedApplication -TargetExe $TargetExe -TargetArgs $TargetArgs
         return
     }

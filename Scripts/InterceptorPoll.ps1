@@ -18,11 +18,11 @@ param(
     [int]$PollIntervalSeconds,
 
     [Parameter(Mandatory = $false)]
-    [string]$PollMarker = "WorkspaceManager_InterceptorPoll"
+    [string]$PollMarker = "RigShift_InterceptorPoll"
 )
 
 try {
-    $title = "WorkspaceManager InterceptorPoll ($WorkloadName)"
+    $title = "RigShift InterceptorPoll ($WorkloadName)"
     $Host.UI.RawUI.WindowTitle = $title
 } catch {
     # Hidden windows may not expose RawUI; ignore best-effort.
