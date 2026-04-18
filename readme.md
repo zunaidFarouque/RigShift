@@ -1,90 +1,122 @@
 # WorkspaceManager
 
-**A declarative, bare-metal state management engine for Windows.**
+**Declarative Windows state:** one `workspaces.json` drives services, applications, power plans, registry, PnP devices, and optional **Image File Execution Options** launch interceptors. **Orchestrator.ps1** applies changes; **Dashboard.ps1** is a four-tab console UI for compliance, modes, overrides, and settings.
 
-WorkspaceManager is a zero-latency orchestration tool that allows you to define complex software environments (Workspaces) using a single JSON configuration. It guarantees that your machine only runs the exact compute resources—background services and executables—required for your current task, mathematically eliminating configuration drift, DPC latency spikes, and background bloat.
-
-Whether you are configuring a sterile environment for live audio/VJ performance, spinning up local GIS licensing servers, or routing Docker containers, WorkspaceManager ensures your operating system obeys your workflow, not the other way around.
+This repository is **BG-Services-Orchestrator**; user-facing text and shortcuts use the **WorkspaceManager** name. Managed IFEO registry hooks are tagged with owner **`BG-Services-Orchestrator`** (see [DOCs/Edge-Cases.md](DOCs/Edge-Cases.md)).
 
 ---
 
-## 📖 The Philosophy
+## Philosophy
 
-Modern Windows applications (like ArcGIS, Cubase, or Adobe CC) deploy persistent background services, telemetry hooks, and update agents that run constantly—even when the application is closed. This causes hardware interrupts, drains battery, and monopolizes the PCIe bus. 
+Heavy desktop software leaves services and agents running after you close the UI. WorkspaceManager lets you declare **per-task** and **per-mode** machine state (DAW vs office vs low-latency stage) and switch it deliberately—without opaque “game booster” behavior.
 
-Standard "debloat" scripts are blunt instruments that break core OS functionality. "Game Boosters" are black-box consumer tools that blindly kill random services. 
+---
 
-**WorkspaceManager is a scalpel.** It treats your local machine like a Kubernetes cluster. You declare the exact state you want in a JSON file, and the engine handles the precise sequence of service toggles, UAC elevations, timing delays, and teardowns required to achieve it.
+## Core capabilities
 
-## ✨ Core Features
+- **Three-layer JSON model:** `Hardware_Definitions` (reusable components), `System_Modes` (power plan + target map), and `App_Workloads` (nested domains with services, executables, and optional intercepts).
+- **Orchestrator:** Resolves `System_Modes` vs `App_Workloads` by name, syncs managed IFEO hooks when `_config.enable_interceptors` is true, and runs Start/Stop pipelines (see [DOCs/Orchestrator-Flow.md](DOCs/Orchestrator-Flow.md)).
+- **Dashboard:** App workloads, system modes (when multiple modes exist), hardware compliance / overrides, and `_config` editing with commit batching and optional `CommitMode: Return` (**R**).
+- **Execution tokens:** Quoted paths, repo-relative `'./…'`, `.lnk` / `.url` via ShellExecute, and command-style lines such as `gsudo taskkill …` (see [DOCs/Configuration.md](DOCs/Configuration.md)).
+- **Shortcuts:** `Generate-Shortcuts.ps1` emits Start/Stop links for each **system mode** and each **app workload** name under `%APPDATA%\Microsoft\Windows\Start Menu\Programs\WorkspaceManager`.
+- **Dashboard entry:** `Run-Dashboard.cmd` or `pwsh -File .\Create-DashboardShortcut.ps1` for a Desktop shortcut (optional `Assets\Dashboard.ico`).
+- **Examples / scripts:** [Examples/](Examples/) and [CustomScripts/](CustomScripts/) for sample automation invoked via repo-relative execution tokens (see [DOCs/Configuration.md](DOCs/Configuration.md)).
+- **PowerShell 7 + gsudo:** Orchestration assumes `pwsh` and elevated helpers where the scripts call `gsudo`.
 
-* **Declarative JSON Architecture:** Define exactly what a Workspace requires (Services, Executables, Timers). The engine handles the execution logic.
-* **Race-Condition Immunity:** Inject explicit millisecond delays (`t 3000`) between sequential service starts to ensure background dependencies are fully initialized before GUI applications launch.
-* **Zombie Process Handling:** Teardown sequences feature built-in timeouts to catch silently crashed applications and prevent system locks.
-* **Protected Processes:** Define critical executables that halt the teardown sequence if detected in RAM, completely preventing accidental data loss.
-* **Headless & Dashboard Modes:** Run silently via Start Menu shortcuts (perfect for PowerToys Run), or manage state interactively via the PowerShell TUI Dashboard (`Dashboard.ps1`). In the main list, **Space** toggles desired Start/Stop (for **Mixed** current state, only `Ready`/`Stopped`), and **Backspace** clears pending changes. Dashboard commit mode can be toggled with **R** between `CommitMode: Exit` (current behavior) and `CommitMode: Return` (commit and return to UI); see [Configuration Schema & Syntax Rules](DOCs/CONFIGURATION.md#11-workspace-type-type).
-* **Zero External Dependencies:** Built entirely in native PowerShell 7. No background agents, no electron wrappers, no telemetry.
+---
 
-## 🚀 Prerequisites
-
-WorkspaceManager requires a modern, sterile Windows terminal environment.
+## Prerequisites
 
 1. **Windows 10 / 11**
-2. **PowerShell 7+** (`pwsh.exe`)
-3. **gsudo** (Linux-style `sudo` for Windows. Highly recommended to install via [Scoop](https://scoop.sh/))
+2. **PowerShell 7** (`pwsh.exe`)
+3. **[gsudo](https://github.com/gerardog/gsudo)** (recommended: `scoop install gsudo` then `gsudo config CacheMode Auto`)
+
+---
+
+## Quick start
+
+**1. Clone the repository**
 
 ```powershell
-# Install gsudo via Scoop
-scoop install gsudo
-gsudo config CacheMode Auto
-````
-
-## 🛠️ Quick Start
-
-**1. Clone the repository:**
-
-```powershell
-git clone [https://github.com/yourusername/WorkspaceManager.git](https://github.com/yourusername/WorkspaceManager.git)
+git clone https://github.com/zunaidFarouque/WorkspaceManager.git
 cd WorkspaceManager
 ```
 
-**2. Define your Workspaces:**
-Edit the `workspaces.json` file. Follow the strict syntax rules defined in the [Configuration Schema](SCHEMA.md).
+The default folder name matches the GitHub repository name (`WorkspaceManager`). If you clone into a different directory, keep `workspaces.json` and the `.ps1` scripts together at the repo root.
+
+**2. Edit `workspaces.json`**
+
+Follow [DOCs/Configuration.md](DOCs/Configuration.md) (summary entry point: [SCHEMA.md](SCHEMA.md)). Minimal shape:
 
 ```json
 {
-  "Audio_Production": {
-    "services": ["eLicenserSvc", "t 3000", "Audiosrv"],
-    "executables": ["'C:/Program Files/Steinberg/Cubase 12/Cubase12.exe' --profile Live"],
-    "protected_processes": ["Cubase12"],
-    "reverse_relations": ["wuauserv"]
+  "_config": {
+    "notifications": false,
+    "enable_interceptors": false,
+    "shortcut_prefix_start": "!Start-",
+    "shortcut_prefix_stop": "!Stop-"
+  },
+  "Hardware_Definitions": {},
+  "System_Modes": {
+    "My_Mode": {
+      "description": "Example",
+      "power_plan": "Balanced",
+      "targets": {}
+    }
+  },
+  "App_Workloads": {
+    "General": {
+      "My_App": {
+        "description": "Example workload",
+        "services": [],
+        "executables": [],
+        "tags": [],
+        "priority": 10,
+        "favorite": false,
+        "hidden": false,
+        "aliases": []
+      }
+    }
   }
 }
 ```
 
-**3. Generate Shortcuts (Optional):**
-If you want to use PowerToys Run or Windows Search for instant, headless orchestration, run the indexer once to generate `!Start-Workspace` and `!Stop-Workspace` shortcuts.
+**3. (Optional) Generate Start Menu shortcuts**
 
 ```powershell
 .\Generate-Shortcuts.ps1
 ```
 
-**4. Execute:**
-Run the Orchestrator manually, or use your newly created shortcuts.
+**4. Run headless or open the Dashboard**
 
 ```powershell
-gsudo pwsh -File Orchestrator.ps1 -WorkspaceName "Audio_Production" -Action "Start"
+gsudo pwsh -File .\Orchestrator.ps1 -WorkspaceName "My_Mode" -Action "Start"
 ```
 
-## 📚 Documentation
+```powershell
+pwsh -File .\Dashboard.ps1
+```
 
-For advanced configuration, edge-case mitigation, and TDD contribution guidelines, please refer to the official documentation:
+Optional desktop shortcut with icon: `pwsh -File .\Create-DashboardShortcut.ps1`
 
-  * [Configuration Schema & Syntax Rules](SCHEMA.md)
-  * [Dashboard & App Workloads UX](DOCs/DASHBOARD.md)
-  * [Edge Cases & Mitigation Strategies](https://www.google.com/search?q=EDGE_CASES.md)
-  * [Contributing & Testing (Pester)](https://www.google.com/search?q=CONTRIBUTING.md)
+---
 
-## 🛡️ License
+## Documentation
 
-Distributed under the MIT License. See `LICENSE` for more information.
+| Document | Topic |
+|----------|--------|
+| [SCHEMA.md](SCHEMA.md) | Pointer to full configuration reference |
+| [DOCs/Configuration.md](DOCs/Configuration.md) | JSON schema, tokens, shortcuts, intercepts |
+| [DOCs/Architecture.md](DOCs/Architecture.md) | Components and data flow |
+| [DOCs/Orchestrator-Flow.md](DOCs/Orchestrator-Flow.md) | Orchestrator phases and parameters |
+| [DOCs/Dashboard.md](DOCs/Dashboard.md) | Tabs, keys, commit behavior |
+| [DOCs/Edge-Cases.md](DOCs/Edge-Cases.md) | Operational caveats |
+| [DOCs/Audit.md](DOCs/Audit.md) | Doc ↔ implementation checklist |
+
+**Tests:** Repository uses Pester (`*.Tests.ps1`). Run from the repo root with Pester installed, for example `Invoke-Pester`.
+
+---
+
+## License
+
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
