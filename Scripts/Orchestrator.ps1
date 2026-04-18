@@ -13,7 +13,9 @@ param(
     [ValidateSet("All", "HardwareOnly", "PowerPlanOnly", "ServicesOnly", "ExecutablesOnly")]
     [string]$ExecutionScope = "All",
 
-    [switch]$SkipInterceptorSync
+    [switch]$SkipInterceptorSync,
+
+    [switch]$InteractiveServiceWait
 )
 
 Set-StrictMode -Version Latest
@@ -99,6 +101,9 @@ $script:ExecutionWaitTimeoutMs = 15000
 # Stop/start can sit in StopPending/StartPending (e.g. Office ClickToRun).
 $script:ServiceLifecycleWaitTimeoutMs = 90000
 $script:IfeoRegistryRoot = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+$script:OrchestratorInteractiveServiceWait = $InteractiveServiceWait.IsPresent
+$script:RigShiftServiceWaitSkippedMessage = "RigShift: Service wait skipped by user."
+$script:RigShiftServiceWaitAbortedMessage = "RigShift: Service wait aborted by user."
 
 function Wait-OrchestratorServiceDesiredStatus {
     param(
@@ -116,6 +121,24 @@ function Wait-OrchestratorServiceDesiredStatus {
         }
         if ([datetime]::UtcNow -ge $deadline) {
             throw "Service '$ServiceName' did not reach ${DesiredStatus} state within ${TimeoutMs}ms (current status: $($svc.Status))."
+        }
+        if ($script:OrchestratorInteractiveServiceWait) {
+            try {
+                if ([Console]::KeyAvailable) {
+                    $key = [Console]::ReadKey($true)
+                    if ($key.Key -eq [ConsoleKey]::Escape) {
+                        throw $script:RigShiftServiceWaitAbortedMessage
+                    }
+                    if ($key.Key -eq [ConsoleKey]::S) {
+                        throw $script:RigShiftServiceWaitSkippedMessage
+                    }
+                }
+            } catch {
+                if ([string]$_.Exception.Message -eq $script:RigShiftServiceWaitAbortedMessage -or
+                    [string]$_.Exception.Message -eq $script:RigShiftServiceWaitSkippedMessage) {
+                    throw
+                }
+            }
         }
         Start-Sleep -Milliseconds $pollMs
     }
@@ -185,6 +208,9 @@ function Invoke-ElevatedServiceLifecycle {
         [System.ServiceProcess.ServiceControllerStatus]::Running
     } else {
         [System.ServiceProcess.ServiceControllerStatus]::Stopped
+    }
+    if ($script:OrchestratorInteractiveServiceWait) {
+        Write-Host ("Waiting for service '{0}' to reach {1}. Press S to skip waiting for this step, Esc to abort the commit." -f $ServiceName, $desired) -ForegroundColor DarkGray
     }
     Wait-OrchestratorServiceDesiredStatus -ServiceName $ServiceName -DesiredStatus $desired -TimeoutMs $script:ServiceLifecycleWaitTimeoutMs
 }

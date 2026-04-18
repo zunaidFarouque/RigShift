@@ -40,20 +40,21 @@ function Invoke-OrchestratorScript {
         [string]$ProfileType,
         [ValidateSet("All", "HardwareOnly", "PowerPlanOnly", "ServicesOnly", "ExecutablesOnly")]
         [string]$ExecutionScope = "All",
-        [switch]$SkipInterceptorSync
+        [switch]$SkipInterceptorSync,
+        [switch]$InteractiveServiceWait
     )
 
     if ([string]::IsNullOrWhiteSpace($ProfileType)) {
         if ($SkipInterceptorSync.IsPresent) {
-            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ExecutionScope $ExecutionScope -SkipInterceptorSync
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ExecutionScope $ExecutionScope -SkipInterceptorSync -InteractiveServiceWait:$InteractiveServiceWait
         } else {
-            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ExecutionScope $ExecutionScope
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ExecutionScope $ExecutionScope -InteractiveServiceWait:$InteractiveServiceWait
         }
     } else {
         if ($SkipInterceptorSync.IsPresent) {
-            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ProfileType $ProfileType -ExecutionScope $ExecutionScope -SkipInterceptorSync
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ProfileType $ProfileType -ExecutionScope $ExecutionScope -SkipInterceptorSync -InteractiveServiceWait:$InteractiveServiceWait
         } else {
-            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ProfileType $ProfileType -ExecutionScope $ExecutionScope
+            & $OrchestratorPath -WorkspaceName $WorkspaceName -Action $Action -ProfileType $ProfileType -ExecutionScope $ExecutionScope -InteractiveServiceWait:$InteractiveServiceWait
         }
     }
 }
@@ -1469,10 +1470,14 @@ function Select-DashboardFailureAction {
     for ($i = 0; $i -lt $Options.Count; $i++) {
         Write-Host ("{0}) {1}" -f ($i + 1), [string]$Options[$i].Label) -ForegroundColor Cyan
     }
+    Write-Host "Esc — Abort commit (same as option 1)." -ForegroundColor DarkGray
 
     while ($true) {
         $keyInfo = if ($null -ne $ReadKeyScript) { & $ReadKeyScript } else { [Console]::ReadKey($true) }
         if ($null -eq $keyInfo) { continue }
+        if ($keyInfo.Key -eq [ConsoleKey]::Escape) {
+            return "AbortCommit"
+        }
         $keyChar = [string]$keyInfo.KeyChar
         if ($keyChar -match "^[1-9]$") {
             $idx = [int]$keyChar - 1
@@ -1534,16 +1539,39 @@ function Invoke-DashboardOperationWithRecovery {
     )
 
     $attempts = 0
+    $rigShiftWaitSkipped = "RigShift: Service wait skipped by user."
+    $rigShiftWaitAborted = "RigShift: Service wait aborted by user."
     while ($true) {
         $attempts++
         Set-DashboardProgressRowStatusForOperation -Rows $Rows -Operation $Operation -Status "Running"
         Write-DashboardProgressDisplay -Rows $Rows -RenderState $RenderState -UseCursorRedraw
+        $interactiveWait = Test-DashboardInteractiveInputAvailable -ReadKeyScript $ReadKeyScript
         try {
-            Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName ([string]$Operation.WorkspaceName) -Action ([string]$Operation.Action) -ProfileType ([string]$Operation.ProfileType) -ExecutionScope ([string]$Operation.ExecutionScope) -SkipInterceptorSync | Out-Null
+            Invoke-OrchestratorScript -OrchestratorPath $OrchestratorPath -WorkspaceName ([string]$Operation.WorkspaceName) -Action ([string]$Operation.Action) -ProfileType ([string]$Operation.ProfileType) -ExecutionScope ([string]$Operation.ExecutionScope) -SkipInterceptorSync -InteractiveServiceWait:$interactiveWait | Out-Null
             Set-DashboardProgressRowStatusForOperation -Rows $Rows -Operation $Operation -Status "Done"
             Write-DashboardProgressDisplay -Rows $Rows -RenderState $RenderState -UseCursorRedraw
             return [pscustomobject]@{ Result = "Done"; Attempts = $attempts; FailureCategory = "" }
         } catch {
+            $exWalk = $_.Exception
+            $rigShiftOutcome = $null
+            while ($null -ne $exWalk) {
+                $m = [string]$exWalk.Message
+                if ($m -eq $rigShiftWaitSkipped) { $rigShiftOutcome = "Skipped"; break }
+                if ($m -eq $rigShiftWaitAborted) { $rigShiftOutcome = "Aborted"; break }
+                $exWalk = $exWalk.InnerException
+            }
+            if ($rigShiftOutcome -eq "Skipped") {
+                Clear-DashboardCommitFailurePresentation -RenderState $RenderState
+                Set-DashboardProgressRowStatusForOperation -Rows $Rows -Operation $Operation -Status "Skipped"
+                Write-DashboardProgressDisplay -Rows $Rows -RenderState $RenderState -UseCursorRedraw
+                return [pscustomobject]@{ Result = "Skipped"; Attempts = $attempts; FailureCategory = "" }
+            }
+            if ($rigShiftOutcome -eq "Aborted") {
+                Clear-DashboardCommitFailurePresentation -RenderState $RenderState
+                Set-DashboardProgressRowStatusForOperation -Rows $Rows -Operation $Operation -Status "Aborted"
+                Write-DashboardProgressDisplay -Rows $Rows -RenderState $RenderState -UseCursorRedraw
+                return [pscustomobject]@{ Result = "Aborted"; Attempts = $attempts; FailureCategory = "" }
+            }
             $failureInfo = Classify-DashboardOperationFailure -Operation $Operation -Exception $_.Exception -Workspaces $Workspaces
             Set-DashboardProgressRowStatusForOperation -Rows $Rows -Operation $Operation -Status "Failed"
             Write-DashboardProgressDisplay -Rows $Rows -RenderState $RenderState -UseCursorRedraw

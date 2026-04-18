@@ -1082,6 +1082,35 @@ Describe "Dashboard scope-gated sequencer (integrated)" {
         $result[0].Result | Should -Be "Aborted"
     }
 
+    It "aborts commit when Escape is pressed on failure menu" {
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{ commit_error_policy = "Prompt" }
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                        executables = @("ONEDRIVE")
+                    }
+                }
+            }
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $operations = @(
+            [pscustomobject]@{ Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office" },
+            [pscustomobject]@{ Phase = 7; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = "Start Office" }
+        )
+        Mock -CommandName Invoke-OrchestratorScript -MockWith { throw "boom" }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Write-Host -MockWith { }
+
+        $readKey = { [pscustomobject]@{ KeyChar = [char]0; Key = [ConsoleKey]::Escape } }
+        $result = @(Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces -ReadKeyScript $readKey)
+        Assert-MockCalled -CommandName Invoke-OrchestratorScript -Times 1 -Exactly
+        $result.Count | Should -Be 1
+        $result[0].Result | Should -Be "Aborted"
+    }
+
     It "applies service-manual remediation and retries when selected" {
         $workspaces = [pscustomobject]@{
             _config = [pscustomobject]@{ commit_error_policy = "Prompt" }

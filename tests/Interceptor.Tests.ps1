@@ -12,6 +12,7 @@ Describe "Interceptor workload resolution and flow" {
     BeforeEach {
         $env:RigShift_InterceptorBypass = $null
         $env:RigShift_InProcPolling = "1"
+        function gsudo { }
         # App_Workloads must be nested Domain.WorkloadName per Get-AppWorkloadEntries / real workspaces.json.
         $script:workspaces = [pscustomobject]@{
             App_Workloads = [pscustomobject]@{
@@ -35,6 +36,12 @@ Describe "Interceptor workload resolution and flow" {
                     }
                 }
             }
+        }
+    }
+
+    AfterEach {
+        if (Test-Path Function:\gsudo) {
+            Remove-Item Function:\gsudo
         }
     }
 
@@ -315,6 +322,103 @@ Describe "Interceptor workload resolution and flow" {
             @($RequiredExecutables).Count -ge 1
         }
         Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly
+    }
+
+    It "lists the required service when its startup type is Disabled" {
+        Mock -CommandName Get-Service -MockWith {
+            param([string]$Name)
+            if ($Name -eq "ClickToRunSvc") {
+                return [pscustomobject]@{
+                    Name                 = "ClickToRunSvc"
+                    StartType            = "Disabled"
+                    Status               = "Stopped"
+                    ServicesDependedOn   = @()
+                }
+            }
+            return $null
+        }
+
+        $blockers = @(Get-InterceptorDisabledServiceBlockers -ServiceName "ClickToRunSvc")
+        $blockers.Count | Should -Be 1
+        $blockers[0] | Should -Be "ClickToRunSvc"
+    }
+
+    It "lists a Disabled dependency before the required service when both are Disabled" {
+        Mock -CommandName Get-Service -MockWith {
+            param([string]$Name)
+            if ($Name -eq "ParentSvc") {
+                return [pscustomobject]@{
+                    Name                 = "ParentSvc"
+                    StartType            = "Disabled"
+                    Status               = "Stopped"
+                    ServicesDependedOn   = @([pscustomobject]@{ Name = "DepSvc" })
+                }
+            }
+            if ($Name -eq "DepSvc") {
+                return [pscustomobject]@{
+                    Name                 = "DepSvc"
+                    StartType            = "Disabled"
+                    Status               = "Stopped"
+                    ServicesDependedOn   = @()
+                }
+            }
+            return $null
+        }
+
+        $blockers = @(Get-InterceptorDisabledServiceBlockers -ServiceName "ParentSvc")
+        $blockers.Count | Should -Be 2
+        $blockers[0] | Should -Be "DepSvc"
+        $blockers[1] | Should -Be "ParentSvc"
+    }
+
+    It "sets Disabled service to Manual and starts it when the user confirms" {
+        Mock -CommandName Get-Service -MockWith {
+            param([string]$Name)
+            if ($Name -eq "ClickToRunSvc") {
+                return [pscustomobject]@{
+                    Name                 = "ClickToRunSvc"
+                    StartType            = "Disabled"
+                    Status               = "Stopped"
+                    ServicesDependedOn   = @()
+                }
+            }
+            return $null
+        }
+        Mock -CommandName Show-InterceptorDisabledServicePrompt -MockWith { $true }
+        $script:gsudoInterceptorLog = @()
+        Mock -CommandName gsudo -MockWith { $script:gsudoInterceptorLog += ,($args -join " ") }
+        Mock -CommandName Start-Process -MockWith { }
+
+        Start-RuleActivationFlow -RequiredServices @("ClickToRunSvc") -RequiredExecutables @() -WorkloadName "Office"
+
+        @($script:gsudoInterceptorLog | Where-Object { $_ -match "Set-Service -Name ClickToRunSvc -StartupType Manual" }).Count | Should -Be 1
+        @($script:gsudoInterceptorLog | Where-Object { $_ -match "Start-Service -Name ClickToRunSvc" }).Count | Should -Be 1
+        Remove-Variable -Name gsudoInterceptorLog -Scope Script -ErrorAction SilentlyContinue
+    }
+
+    It "does not set Manual when the user declines the disabled-service prompt" {
+        Mock -CommandName Get-Service -MockWith {
+            param([string]$Name)
+            if ($Name -eq "ClickToRunSvc") {
+                return [pscustomobject]@{
+                    Name                 = "ClickToRunSvc"
+                    StartType            = "Disabled"
+                    Status               = "Stopped"
+                    ServicesDependedOn   = @()
+                }
+            }
+            return $null
+        }
+        Mock -CommandName Show-InterceptorDisabledServicePrompt -MockWith { $false }
+        $script:gsudoInterceptorLog = @()
+        Mock -CommandName gsudo -MockWith { $script:gsudoInterceptorLog += ,($args -join " ") }
+        Mock -CommandName Start-Process -MockWith { }
+
+        Start-RuleActivationFlow -RequiredServices @("ClickToRunSvc") -RequiredExecutables @() -WorkloadName "Office"
+
+        @($script:gsudoInterceptorLog | Where-Object { $_ -match "Set-Service" }).Count | Should -Be 0
+        @($script:gsudoInterceptorLog | Where-Object { $_ -match "Start-Service -Name ClickToRunSvc" }).Count | Should -Be 1
+        Remove-Variable -Name gsudoInterceptorLog -Scope Script -ErrorAction SilentlyContinue
     }
 }
 

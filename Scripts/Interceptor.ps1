@@ -271,6 +271,79 @@ FULL workload (Yes):
     }
 }
 
+function Get-InterceptorDisabledServiceBlockers {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ServiceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ServiceName)) {
+        return @()
+    }
+
+    $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($null -eq $s) {
+        return @()
+    }
+
+    $ordered = [System.Collections.Generic.List[string]]::new()
+    $seen = @{ }
+
+    foreach ($dep in @($s.ServicesDependedOn)) {
+        if ($null -eq $dep) { continue }
+        $depSvc = Get-Service -Name ([string]$dep.Name) -ErrorAction SilentlyContinue
+        if ($null -eq $depSvc) { continue }
+        if ([string]$depSvc.StartType -ne "Disabled") { continue }
+        $low = ([string]$depSvc.Name).ToLowerInvariant()
+        if ($seen.ContainsKey($low)) { continue }
+        $seen[$low] = $true
+        [void]$ordered.Add([string]$depSvc.Name)
+    }
+
+    if ([string]$s.StartType -eq "Disabled") {
+        $low = ([string]$s.Name).ToLowerInvariant()
+        if (-not $seen.ContainsKey($low)) {
+            $seen[$low] = $true
+            [void]$ordered.Add([string]$s.Name)
+        }
+    }
+
+    return @($ordered)
+}
+
+function Show-InterceptorDisabledServicePrompt {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ServiceName,
+        [Parameter(Mandatory = $true)]
+        [string]$RequiredForServiceName,
+        [Parameter(Mandatory = $true)]
+        [string]$WorkloadName
+    )
+
+    Add-Type -AssemblyName System.Windows.Forms
+
+    $message = @"
+The Windows service '$ServiceName' has startup type Disabled and cannot be started.
+
+It is required for '$RequiredForServiceName' (workload '$WorkloadName').
+
+Set it to Manual and continue?
+"@
+
+    $result = [System.Windows.Forms.MessageBox]::Show(
+        $message,
+        "RigShift",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question,
+        [System.Windows.Forms.MessageBoxDefaultButton]::Button1
+    )
+
+    return ($result -eq [System.Windows.Forms.DialogResult]::Yes)
+}
+
 function Start-RuleActivationFlow {
     [CmdletBinding()]
     param(
@@ -287,6 +360,14 @@ function Start-RuleActivationFlow {
     foreach ($serviceName in @($RequiredServices)) {
         $svc = [string]$serviceName
         if ([string]::IsNullOrWhiteSpace($svc)) { continue }
+
+        foreach ($blocker in @(Get-InterceptorDisabledServiceBlockers -ServiceName $svc)) {
+            if (-not (Show-InterceptorDisabledServicePrompt -ServiceName $blocker -RequiredForServiceName $svc -WorkloadName $WorkloadName)) {
+                continue
+            }
+            gsudo Set-Service -Name $blocker -StartupType Manual 2>&1 | Out-Null
+        }
+
         gsudo Start-Service -Name $svc 2>&1 | Out-Null
     }
 
