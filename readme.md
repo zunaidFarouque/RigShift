@@ -85,7 +85,7 @@ cd RigShift
 }
 ```
 
-3.  Optional setup helper (creates `RigShift Dashboard.lnk` at the repo root and can add Desktop/Start Menu shortcuts):
+3.  Optional setup helper (creates `RigShift Dashboard.lnk` and `RigShift workspaces.json.lnk` at the repo root, and can add Desktop/Start Menu shortcuts):
 
 <!-- end list -->
 
