@@ -51,7 +51,7 @@ All keys are optional unless noted.
 
 ## `Hardware_Definitions`
 
-Each property name is a **component id** referenced from `System_Modes.targets` or from Dashboard hardware overrides (`-ProfileType Hardware_Override`).
+Each property name is a **component id** referenced from `System_Modes.hardware_targets`, `App_Workloads.<Domain>.<Workload>.hardware_targets`, or Dashboard hardware overrides (`-ProfileType Hardware_Override`).
 
 Common properties:
 
@@ -99,11 +99,11 @@ Each mode is a named profile.
 |----------|---------|
 | `description` | Metadata / UI. |
 | `power_plan` | String matched against `powercfg /l` when the mode is **Started** (substring match). |
-| `targets` | Object map: **component id** → `ON`, `OFF`, or `ANY`. `ANY` means “do not enforce this component for compliance in this mode.” |
+| `hardware_targets` | Object map: **component id** (or `@alias` wildcard shorthand) → `ON`, `OFF`, or `ANY`. `ANY` means “do not enforce this component for compliance in this mode.” |
 | `create_shortcut_for` | Optional: `none` \| `start` \| `stop` (case-insensitive) for `Generate-Shortcuts.ps1` only. |
 | `post_change_message`, `post_start_message`, `post_stop_message` | Optional Dashboard post-commit messages. |
 
-On **Stop**, target ON/OFF values are **inverted** for transition (ANY unchanged). There is no automatic “revert to previous power plan” unless you encode another mode or hardware action.
+On **Stop**, hardware target ON/OFF values are **inverted** for transition (ANY unchanged). There is no automatic “revert to previous power plan” unless you encode another mode or hardware action.
 
 ---
 
@@ -116,6 +116,7 @@ Structure: `App_Workloads.<DomainName>.<WorkloadName>`
 | `description` | Shown in Dashboard when the row is highlighted. |
 | `services` | Array of service **names**; started on Start, stopped on Stop (Orchestrator order: see flow doc). |
 | `executables` | Array of **execution tokens** (see below). |
+| `hardware_targets` | Optional object map: **component id** (or `@alias`) → `ON`/`OFF`/`ANY`. When a workload is Active, these targets override mode targets during commit planning. |
 | `tags` | String array for search and filtering on Tab 1. |
 | `priority` | Integer; lower sorts earlier in the Dashboard list. |
 | `favorite` | Boolean; `F` filter on Tab 1. |
@@ -125,6 +126,13 @@ Structure: `App_Workloads.<DomainName>.<WorkloadName>`
 | `create_shortcut_for` | Same as for system modes; applies to this workload’s shortcuts. |
 
 **Workload name uniqueness:** The Orchestrator resolves `App_Workload` by **workload name only** across domains. Keep names unique, or the first definition wins. `Generate-Shortcuts.ps1` warns and skips duplicates when building `.lnk` files.
+
+### Hardware target shorthand (`@alias`)
+
+- Keys starting with `@` are shorthand selectors. `@bluetooth` is resolved as wildcard `*bluetooth*` against `Hardware_Definitions` component ids.
+- A shorthand key can match one or many components.
+- If a shorthand key matches nothing, the dashboard warns before commit and asks for explicit confirmation.
+- Expanded app workload hardware targets are applied with higher precedence than system-mode hardware targets for the same component.
 
 ---
 

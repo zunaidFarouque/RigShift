@@ -360,8 +360,8 @@ function Get-WorkspaceState {
         $null -ne $systemModes -and
         $null -ne $systemModes.PSObject.Properties[$activeSystemMode]) {
         $activeModeData = $systemModes.PSObject.Properties[$activeSystemMode].Value
-        if ($null -ne $activeModeData.PSObject.Properties["targets"]) {
-            $activeModeTargets = $activeModeData.targets
+        if ($null -ne $activeModeData.PSObject.Properties["hardware_targets"]) {
+            $activeModeTargets = $activeModeData.hardware_targets
         }
     }
 

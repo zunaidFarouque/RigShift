@@ -68,21 +68,23 @@ Large lists use a **windowed renderer** around the cursor; the description line 
 Each row is a `System_Modes` entry.
 
 - **Space:** set the **blueprint** — marks the selected mode Active/Inactive in UI and writes `Active_System_Mode` to `state.json` (`Set-DashboardActiveBlueprint`).
-- **A:** **queue ideal hardware** — for compliance rows that are non-compliant and not `ANY`, enqueue `Hardware_Override` pending ON/OFF to match the active mode’s targets (`Add-DashboardIdealHardwareToQueue`).
+- **A:** **queue ideal hardware** — for compliance rows that are non-compliant and not `ANY`, enqueue `Hardware_Override` pending ON/OFF to match the active mode’s `hardware_targets` (`Add-DashboardIdealHardwareToQueue`).
 - **Enter:** commit (see [Commit flow](#commit-flow)).
 
-Footer: `[Space] Set Blueprint | [A] Queue Ideal States | [Enter] Commit`.
+Footer line 1: `[Space] Set Mode | [A] Queue Ideal States`.
+Footer line 2: `[R] CommitMode | [Enter] Commit & <Exit|Return> | [Esc] Cancel`.
 
 ---
 
 ## Tab 3 — Hardware Compliance / System Health
 
-Shows **compliance rows** from `WorkspaceState` for each `Hardware_Definitions` component vs the active system mode’s `targets`.
+Shows **compliance rows** from `WorkspaceState` for each `Hardware_Definitions` component vs the active system mode’s `hardware_targets`.
 
 - **Space:** **toggle** a pending hardware override for the selected component (`Toggle-DashboardQueueOverride` cycles ON/OFF in the in-memory queue). Queued rows show `[QUEUED: ON|OFF]` in the presentation helper.
 - **Backspace:** **clear** the queue entry for the selected component only (`Clear-DashboardQueueOverride`).
 
-Footer (multi-mode): `[Space] Toggle Override | [Bksp] Clear Queue | [Enter] Commit`.
+Footer line 1: `[Space] Toggle Override | [Bksp] Clear Queue`.
+Footer line 2: `[R] CommitMode | [Enter] Commit & <Exit|Return> | [Esc] Cancel`.
 
 ---
 
@@ -107,7 +109,16 @@ Defined actions come from `Get-DashboardActionDefinitions` in `Dashboard.Impl.ps
 
 `Reset_Interceptors` forces `enable_interceptors = false` in JSON, re-syncs IFEO hooks through the orchestrator path, and tears down helper processes for `Interceptor.ps1` / `InterceptorPoll.ps1`, only touching keys marked `RigShift_Managed`.
 
-Footer: `[Space] Edit Setting | [Right] Edit | [Left or +/-] Poll Seconds | [Enter] Commit/Confirm Action | Actions are exclusive`.
+Footer is context-aware by selected Tab 4 row:
+- Bool/choice setting: line 1 shows `[Space] Edit Setting`.
+- String setting: line 1 adds `[Right] Edit`.
+- Int setting (`interceptor_poll_max_seconds`): line 1 adds `[Left/Right or +/-] Poll Seconds`.
+- Section row: line 1 shows only tab navigation.
+- Action row: line 1 shows only tab navigation (no duplicate Enter hint).
+
+Line 2 behavior:
+- Non-action rows: `[R] CommitMode | [Enter] Commit & <Exit|Return> | [Esc] Cancel`.
+- Action rows: `[R] CommitMode | [Enter] Confirm/Run Action | [Esc] Cancel`.
 
 ---
 
@@ -117,9 +128,24 @@ When you press **Enter** to commit:
 
 1. Pending **Tab 4 settings** may be written to `workspaces.json` first (`Save-DashboardConfigSettings`).
 2. **Interceptor sync pass:** `Invoke-OrchestratorScript` runs once with `-WorkspaceName "__SYNC_ONLY__" -Action Start`. The orchestrator runs Phase B (sync) then fails name resolution; the Dashboard **expects** that failure message and continues. Per-row calls then use `-SkipInterceptorSync`.
-3. **Profile rows:** `Invoke-WorkspaceCommit` walks pending workload/mode/hardware states; for each row whose desired ≠ current and desired ≠ Mixed, it logs and calls `Orchestrator.ps1` with `ProfileType` when the row carries it (hardware overrides use `Hardware_Override`). A **1 second** sleep runs between invocations.
-4. **Post-commit messages:** strings from `post_change_message`, `post_start_message`, `post_stop_message` on matching `System_Modes` or `Hardware_Definitions` nodes may print a **REQUIRED ACTIONS** block and wait for a keypress (`Get-DashboardPostCommitMessages`).
-5. **CommitMode:** `Exit` exits after commit (with optional wait for messages). `Return` offers “any key to return to dashboard, Esc to exit” (`Resolve-DashboardPostCommitAction`).
+3. **Global sequencer plan:** the dashboard builds one operation stack using **explicit user intent only**:
+   - **Tab 1:** workload start/stop is always scheduled (phases 1–2 and 6–7). Workload `hardware_targets` run in phases 3/5 **only for workloads that are transitioning to Active** (start path).
+   - **Tab 2:** a **mode blueprint change** schedules **phase 4 (power plan) only** unless hardware was explicitly queued. It does **not** implicitly apply `System_Modes.hardware_targets`.
+   - **Tab 2 `A` / Tab 3:** any non-empty `PendingHardwareChanges` schedules phases 3/5 **only for those queued components** (Tab 2 **A** pre-fills non-compliant rows from the active blueprint). `@alias` expansion applies to workload/mode maps when those maps are consulted; the commit list itself is queue + workload starts. **Precedence on overlap:** `App_Workloads.hardware_targets` (start path) wins over a queued ON/OFF for the same component.
+   - Operations always run in one deterministic seven-phase order (execution buckets only—nothing runs unless it appears in the plan).
+4. **Execution log format:** before executing the operations, Dashboard prints intent-grouped sections (for example `STARTING SERVICES`, `STARTING EXECUTABLES`) and concrete bullets using `- Reason: task`. During execution, the same block is live-updated so the current task is highlighted with `->` and completed tasks are marked `OK`. Numeric phase labels are internal sequencing only and are not shown in this user-facing log.
+5. **Runtime failure handling:** if an operation throws, Dashboard classifies the failure (`ServiceDisabled`, `NotFound`, `AccessDenied`, `Timeout`, `Unknown`) and resolves it explicitly:
+   - baseline actions: `Abort Commit`, `Skip Step`, `Retry Step`
+   - service-disabled remediation: `Set StartupType Manual and Retry` (when service context is available)
+   - row markers during recovery: failed `XX`, skipped `SK`, aborted `AB`
+   - operation summary is printed after the loop (`Done | Skipped | Failed | Aborted`)
+6. **Non-interactive policy:** `_config.commit_error_policy` controls deterministic behavior when prompt input is unavailable:
+   - `Prompt` (default): prompt in interactive hosts; falls back to `Abort` in non-interactive hosts
+   - `Abort`: abort current commit immediately on operation failure
+   - `Skip`: skip failed operation and continue sequencer order
+7. **Warnings gate:** unresolved `@alias` keys are shown before execution and require explicit keypress confirmation to proceed.
+8. **Post-commit messages:** message candidates are derived from sequencer operations (deduped by name/profile/action; `ExecutionScope` does not duplicate messages), then strings from `post_change_message`, `post_start_message`, `post_stop_message` on matching `System_Modes` or `Hardware_Definitions` nodes may print a **REQUIRED ACTIONS** block and wait for a keypress (`Get-DashboardPostCommitMessages`).
+9. **CommitMode:** `Exit` exits after commit (with optional wait for messages). `Return` offers “any key to return to dashboard, Esc to exit” (`Resolve-DashboardPostCommitAction`).
 
 ---
 

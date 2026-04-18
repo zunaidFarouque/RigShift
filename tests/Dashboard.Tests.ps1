@@ -328,14 +328,71 @@ Describe "Dashboard Tab 2/3 Queue Workflow" {
         $ignoredView.Status | Should -Be "-"
     }
 
-    It "renders tab-specific footer action text" {
+    It "renders unified footer layout across all tabs" {
         $tab1Footer = Get-DashboardFooterText -CurrentTab 1
-        $tab1Footer | Should -Match '\[`]Details: None \| \[M\]ixed=Off \| \[/\]Filters: q='''' \| \[G\]roup=''All'' \| \[F\]avourites=Off'
-        $tab1Footer | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Toggle \| \[R\] CommitMode'
-        $tab1Footer | Should -Match '\[Enter\] Commit & Exit \| \[Esc\] Cancel'
-        Get-DashboardFooterText -CurrentTab 2 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Set Blueprint \| \[A\] Queue Ideal States \| \[Enter\] Commit'
-        Get-DashboardFooterText -CurrentTab 3 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Toggle Override \| \[Bksp\] Clear Queue \| \[Enter\] Commit'
-        Get-DashboardFooterText -CurrentTab 4 | Should -Match '\[1\]\[2\]\[3\]\[4\] Tab \| \[Up/Down\] Nav \| \[Space\] Edit Setting \| \[Right\] Edit \| \[Left or \+/-\] Poll Seconds \| \[Enter\] Commit/Confirm Action \| Actions are exclusive'
+        $tab1Lines = @($tab1Footer -split "`n")
+        $tab1Lines.Count | Should -Be 3
+        $tab1Lines[0] | Should -Be "[``]Details: None | [M]ixed=Off | [/]Filters: q='' | [G]roup='All' | [F]avourites=Off"
+        $tab1Lines[1] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle"
+        $tab1Lines[2] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+
+        $tab2Footer = Get-DashboardFooterText -CurrentTab 2
+        $tab2Lines = @($tab2Footer -split "`n")
+        $tab2Lines.Count | Should -Be 2
+        $tab2Lines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Set Mode | [A] Queue Ideal States"
+        $tab2Lines[0] | Should -Not -Match "Set Blueprint"
+        $tab2Lines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+
+        $tab3Footer = Get-DashboardFooterText -CurrentTab 3
+        $tab3Lines = @($tab3Footer -split "`n")
+        $tab3Lines.Count | Should -Be 2
+        $tab3Lines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle Override | [Bksp] Clear Queue"
+        $tab3Lines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+
+        $tab4Footer = Get-DashboardFooterText -CurrentTab 4
+        $tab4Lines = @($tab4Footer -split "`n")
+        $tab4Lines.Count | Should -Be 2
+        $tab4Lines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting | [Right] Edit | [Left or +/-] Poll Seconds"
+        $tab4Lines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+    }
+
+    It "renders tab 4 footer as context-aware by selected row" {
+        $boolRow = [pscustomobject]@{ Key = "notifications"; Type = "bool"; Value = $true }
+        $choiceRow = [pscustomobject]@{ Key = "console_style"; Type = "choice"; Value = "Normal"; Choices = @("Normal", "Compact") }
+        $stringRow = [pscustomobject]@{ Key = "shortcut_prefix_start"; Type = "string"; Value = "!Start-" }
+        $intRow = [pscustomobject]@{ Key = "interceptor_poll_max_seconds"; Type = "int"; Value = 15; Min = 1 }
+        $sectionRow = [pscustomobject]@{ Type = "section"; Label = "-------- Actions --------" }
+        $actionRow = [pscustomobject]@{ Key = "Reset_Interceptors"; Type = "action"; ActionId = "Reset_Interceptors" }
+
+        $boolLines = @((Get-DashboardFooterText -CurrentTab 4 -Tab4SelectedRow $boolRow -CommitMode "Exit") -split "`n")
+        $boolLines.Count | Should -Be 2
+        $boolLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting"
+        $boolLines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+
+        $choiceLines = @((Get-DashboardFooterText -CurrentTab 4 -Tab4SelectedRow $choiceRow -CommitMode "Return") -split "`n")
+        $choiceLines.Count | Should -Be 2
+        $choiceLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting"
+        $choiceLines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Return | [Esc] Cancel"
+
+        $stringLines = @((Get-DashboardFooterText -CurrentTab 4 -Tab4SelectedRow $stringRow -CommitMode "Exit") -split "`n")
+        $stringLines.Count | Should -Be 2
+        $stringLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting | [Right] Edit"
+        $stringLines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+
+        $intLines = @((Get-DashboardFooterText -CurrentTab 4 -Tab4SelectedRow $intRow -CommitMode "Exit") -split "`n")
+        $intLines.Count | Should -Be 2
+        $intLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting | [Left/Right or +/-] Poll Seconds"
+        $intLines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+
+        $sectionLines = @((Get-DashboardFooterText -CurrentTab 4 -Tab4SelectedRow $sectionRow -CommitMode "Exit") -split "`n")
+        $sectionLines.Count | Should -Be 2
+        $sectionLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav"
+        $sectionLines[1] | Should -Be "[R] CommitMode | [Enter] Commit & Exit | [Esc] Cancel"
+
+        $actionLines = @((Get-DashboardFooterText -CurrentTab 4 -Tab4SelectedRow $actionRow -CommitMode "Return") -split "`n")
+        $actionLines.Count | Should -Be 2
+        $actionLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav"
+        $actionLines[1] | Should -Be "[R] CommitMode | [Enter] Confirm/Run Action | [Esc] Cancel"
     }
 
     It "sets active blueprint immediately and updates mode rows" {
@@ -740,6 +797,371 @@ Describe "Dashboard Commit Scope Rules" {
     }
 }
 
+Describe "Dashboard scope-gated sequencer (integrated)" {
+    BeforeAll {
+        $basePath = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        $script:repoRoot = Split-Path -Path $basePath -Parent
+        $script:scriptsDir = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        . (Join-Path -Path $script:scriptsDir -ChildPath "Dashboard.ps1")
+    }
+
+    It "Office-only workload activation does not schedule mode hardware operations" {
+        $workspaces = [pscustomobject]@{
+            Hardware_Definitions = [pscustomobject]@{
+                Bluetooth_Radio = [pscustomobject]@{ type = "pnp_device"; match = @("*Bluetooth*") }
+            }
+            System_Modes = [pscustomobject]@{
+                Live_Stage_Life = [pscustomobject]@{
+                    power_plan       = "Max Performance"
+                    hardware_targets = [pscustomobject]@{ Bluetooth_Radio = "OFF" }
+                }
+            }
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{ services = @("ClickToRunSvc"); executables = @("ONEDRIVE") }
+                }
+            }
+        }
+        $modeStates = @([pscustomobject]@{ Name = "Live_Stage_Life"; CurrentState = "Active"; DesiredState = "Active"; ProfileType = "System_Mode" })
+        $workloadStates = @(
+            [pscustomobject]@{ Name = "Office"; CurrentState = "Inactive"; DesiredState = "Active"; ProfileType = "App_Workload"; Domain = "Office" }
+        )
+        $warnings = [System.Collections.Generic.List[string]]::new()
+        $ops = @(Build-DashboardCommitOperations -Workspaces $workspaces -ModeStates $modeStates -WorkloadStates $workloadStates -PendingHardwareChanges @{} -WarningsRef ([ref]$warnings))
+
+        @($ops | Where-Object { $_.Phase -in 3, 5 }).Count | Should -Be 0
+        @($ops | Where-Object { $_.Phase -eq 4 }).Count | Should -Be 0
+        @($ops | Where-Object { $_.WorkspaceName -eq "Office" -and $_.Phase -in 6, 7 }).Count | Should -Be 2
+    }
+
+    It "prints intent sections and detailed tasks instead of phase-number lines" {
+        $workspaces = [pscustomobject]@{
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services    = @("ClickToRunSvc")
+                        executables = @("ONEDRIVE")
+                    }
+                }
+            }
+        }
+        $operations = @(
+            [pscustomobject]@{
+                Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office"
+            },
+            [pscustomobject]@{
+                Phase = 7; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = "Start Office"
+            }
+        )
+
+        $printed = [System.Collections.Generic.List[string]]::new()
+        Mock -CommandName Write-Host -MockWith {
+            param([object]$Object)
+            if ($null -ne $Object) {
+                $printed.Add([string]$Object)
+            }
+        }
+        Mock -CommandName Invoke-OrchestratorScript -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+
+        Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces
+
+        @($printed | Where-Object { $_ -eq "STARTING SERVICES" }).Count | Should -BeGreaterThan 0
+        @($printed | Where-Object { $_ -eq "STARTING EXECUTABLES" }).Count | Should -BeGreaterThan 0
+        @($printed | Where-Object { $_ -like "*> Phase *" }).Count | Should -Be 0
+        @($printed | Where-Object { $_ -like "- Start Office: starting service ClickToRunSvc" }).Count | Should -BeGreaterThan 0
+        @($printed | Where-Object { $_ -like "- Start Office: starting executable ONEDRIVE" }).Count | Should -BeGreaterThan 0
+    }
+
+    It "transitions visible task status from pending to running to done" {
+        $workspaces = [pscustomobject]@{
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                    }
+                }
+            }
+        }
+        $operation = [pscustomobject]@{
+            Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office"
+        }
+        $rows = @(New-DashboardCommitProgressRows -Operations @($operation) -Workspaces $workspaces)
+        @($rows | Where-Object { $_.RowType -eq "Task" -and $_.Status -eq "Pending" }).Count | Should -Be 1
+
+        Set-DashboardProgressRowStatusForOperation -Rows $rows -Operation $operation -Status "Running"
+        @($rows | Where-Object { $_.RowType -eq "Task" -and $_.Status -eq "Running" }).Count | Should -Be 1
+
+        Set-DashboardProgressRowStatusForOperation -Rows $rows -Operation $operation -Status "Done"
+        @($rows | Where-Object { $_.RowType -eq "Task" -and $_.Status -eq "Done" }).Count | Should -Be 1
+    }
+
+    It "shows running marker during execution and done marker after execution" {
+        $workspaces = [pscustomobject]@{
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                    }
+                }
+            }
+        }
+        $operations = @(
+            [pscustomobject]@{
+                Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office"
+            }
+        )
+
+        $printed = [System.Collections.Generic.List[string]]::new()
+        Mock -CommandName Write-Host -MockWith {
+            param([object]$Object)
+            if ($null -ne $Object) { $printed.Add([string]$Object) }
+        }
+        Mock -CommandName Invoke-OrchestratorScript -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+
+        Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces
+
+        @($printed | Where-Object { $_ -like "-> Start Office: starting service ClickToRunSvc" }).Count | Should -BeGreaterThan 0
+        @($printed | Where-Object { $_ -like "OK Start Office: starting service ClickToRunSvc" }).Count | Should -BeGreaterThan 0
+    }
+
+    It "falls back to append rendering when cursor redraw is unavailable" {
+        $rows = @(
+            [pscustomobject]@{ RowType = "Section"; Section = "STARTING SERVICES"; Status = "Pending"; Reason = ""; TaskText = ""; Phase = 6; OpIndex = -1 },
+            [pscustomobject]@{ RowType = "Task"; Section = "STARTING SERVICES"; Status = "Pending"; Reason = "Start Office"; TaskText = "starting service ClickToRunSvc"; Phase = 6; OpIndex = 1; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly" }
+        )
+        $renderState = @{ CanRedraw = $false }
+        $printed = [System.Collections.Generic.List[string]]::new()
+        Mock -CommandName Write-Host -MockWith {
+            param([object]$Object)
+            if ($null -ne $Object) { $printed.Add([string]$Object) }
+        }
+
+        Write-DashboardProgressDisplay -Rows $rows -RenderState $renderState -UseCursorRedraw
+        $renderState["CanRedraw"] = $false
+        $rows[1].Status = "Running"
+        Write-DashboardProgressDisplay -Rows $rows -RenderState $renderState -UseCursorRedraw
+
+        @($printed | Where-Object { $_ -eq "STARTING SERVICES" }).Count | Should -Be 2
+        @($printed | Where-Object { $_ -like "-> Start Office: starting service ClickToRunSvc" }).Count | Should -Be 1
+    }
+
+    It "shows baseline failure recovery options for operation failures" {
+        $failureInfo = [pscustomobject]@{
+            Category = "Unknown"
+            Message = "boom"
+            CanRemediateServiceDisabled = $false
+            ServiceName = ""
+        }
+        $options = @(Resolve-DashboardOperationFailureOptions -FailureInfo $failureInfo)
+        @($options | Select-Object -ExpandProperty Id) | Should -Be @("AbortCommit", "SkipStep", "RetryStep")
+    }
+
+    It "offers service-manual remediation for service-disabled failures" {
+        $operation = [pscustomobject]@{
+            Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office"
+        }
+        $workspaces = [pscustomobject]@{
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                    }
+                }
+            }
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $info = Classify-DashboardOperationFailure -Operation $operation -Exception ([System.Exception]::new("Service cannot be started because it is disabled.")) -Workspaces $workspaces
+        $info.Category | Should -Be "ServiceDisabled"
+        $info.CanRemediateServiceDisabled | Should -BeTrue
+        $options = @(Resolve-DashboardOperationFailureOptions -FailureInfo $info)
+        @($options | Select-Object -ExpandProperty Id) | Should -Contain "SetServiceManualAndRetry"
+    }
+
+    It "retries failed operation when RetryStep is selected" {
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{ commit_error_policy = "Prompt" }
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                    }
+                }
+            }
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $operations = @(
+            [pscustomobject]@{ Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office" }
+        )
+        $script:count = 0
+        Mock -CommandName Invoke-OrchestratorScript -MockWith {
+            $script:count++
+            if ($script:count -eq 1) { throw "temporary failure" }
+        }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Write-Host -MockWith { }
+
+        $script:choiceCalls = 0
+        $readKey = {
+            $script:choiceCalls++
+            if ($script:choiceCalls -eq 1) { [pscustomobject]@{ KeyChar = '3'; Key = [ConsoleKey]::D3 } } else { [pscustomobject]@{ KeyChar = '1'; Key = [ConsoleKey]::D1 } }
+        }
+
+        $result = @(Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces -ReadKeyScript $readKey)
+        Assert-MockCalled -CommandName Invoke-OrchestratorScript -Times 2 -Exactly
+        $result[0].Result | Should -Be "Done"
+        $result[0].Attempts | Should -Be 2
+    }
+
+    It "skips failed step and continues with next operation" {
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{ commit_error_policy = "Prompt" }
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                        executables = @("ONEDRIVE")
+                    }
+                }
+            }
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $operations = @(
+            [pscustomobject]@{ Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office" },
+            [pscustomobject]@{ Phase = 7; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = "Start Office" }
+        )
+        Mock -CommandName Invoke-OrchestratorScript -MockWith {
+            if ($ExecutionScope -eq "ServicesOnly") { throw "boom" }
+        }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Write-Host -MockWith { }
+
+        $readKey = { [pscustomobject]@{ KeyChar = '2'; Key = [ConsoleKey]::D2 } }
+        $result = @(Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces -ReadKeyScript $readKey)
+        Assert-MockCalled -CommandName Invoke-OrchestratorScript -Times 2 -Exactly
+        $result[0].Result | Should -Be "Skipped"
+        $result[1].Result | Should -Be "Done"
+    }
+
+    It "aborts commit on AbortCommit selection and stops remaining operations" {
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{ commit_error_policy = "Prompt" }
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                        executables = @("ONEDRIVE")
+                    }
+                }
+            }
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $operations = @(
+            [pscustomobject]@{ Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office" },
+            [pscustomobject]@{ Phase = 7; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = "Start Office" }
+        )
+        Mock -CommandName Invoke-OrchestratorScript -MockWith { throw "boom" }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Write-Host -MockWith { }
+
+        $readKey = { [pscustomobject]@{ KeyChar = '1'; Key = [ConsoleKey]::D1 } }
+        $result = @(Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces -ReadKeyScript $readKey)
+        Assert-MockCalled -CommandName Invoke-OrchestratorScript -Times 1 -Exactly
+        $result.Count | Should -Be 1
+        $result[0].Result | Should -Be "Aborted"
+    }
+
+    It "applies service-manual remediation and retries when selected" {
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{ commit_error_policy = "Prompt" }
+            App_Workloads = [pscustomobject]@{
+                Office = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                    }
+                }
+            }
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $operations = @(
+            [pscustomobject]@{ Phase = 6; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = "Start Office" }
+        )
+        $script:attempts = 0
+        Mock -CommandName Invoke-OrchestratorScript -MockWith {
+            $script:attempts++
+            if ($script:attempts -eq 1) { throw "service is disabled" }
+        }
+        Mock -CommandName Invoke-DashboardSetServiceStartupManual -MockWith { }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Write-Host -MockWith { }
+
+        $readKey = { [pscustomobject]@{ KeyChar = '4'; Key = [ConsoleKey]::D4 } }
+        $result = @(Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces -ReadKeyScript $readKey)
+        Assert-MockCalled -CommandName Invoke-DashboardSetServiceStartupManual -Times 1 -Exactly
+        Assert-MockCalled -CommandName Invoke-OrchestratorScript -Times 2 -Exactly
+        $result[0].Result | Should -Be "Done"
+    }
+
+    It "uses deterministic Abort policy in non-interactive mode" {
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{ commit_error_policy = "Abort" }
+            App_Workloads = [pscustomobject]@{}
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $operations = @(
+            [pscustomobject]@{ Phase = 5; WorkspaceName = "Bluetooth_Radio"; ProfileType = "Hardware_Override"; Action = "Start"; ExecutionScope = "All"; Reason = "Queued hardware override" },
+            [pscustomobject]@{ Phase = 7; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = "Start Office" }
+        )
+        Mock -CommandName Invoke-OrchestratorScript -MockWith { throw "boom" }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Write-Host -MockWith { }
+        Mock -CommandName Test-DashboardInteractiveInputAvailable -MockWith { $false }
+
+        $result = @(Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces)
+        $result.Count | Should -Be 1
+        $result[0].Result | Should -Be "Aborted"
+    }
+
+    It "uses deterministic Skip policy in non-interactive mode" {
+        $workspaces = [pscustomobject]@{
+            _config = [pscustomobject]@{ commit_error_policy = "Skip" }
+            App_Workloads = [pscustomobject]@{}
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+        }
+        $operations = @(
+            [pscustomobject]@{ Phase = 5; WorkspaceName = "Bluetooth_Radio"; ProfileType = "Hardware_Override"; Action = "Start"; ExecutionScope = "All"; Reason = "Queued hardware override" },
+            [pscustomobject]@{ Phase = 7; WorkspaceName = "Office"; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = "Start Office" }
+        )
+        $script:calls = 0
+        Mock -CommandName Invoke-OrchestratorScript -MockWith {
+            $script:calls++
+            if ($script:calls -eq 1) { throw "boom" }
+        }
+        Mock -CommandName Start-Sleep -MockWith { }
+        Mock -CommandName Write-Host -MockWith { }
+        Mock -CommandName Test-DashboardInteractiveInputAvailable -MockWith { $false }
+
+        $result = @(Invoke-DashboardCommitOperations -Operations $operations -OrchestratorPath "C:\fake\Orchestrator.ps1" -Workspaces $workspaces)
+        $result.Count | Should -Be 2
+        $result[0].Result | Should -Be "Skipped"
+        $result[1].Result | Should -Be "Done"
+    }
+}
+
 Describe "Dashboard Workload Detail Modes" {
     BeforeAll {
         $basePath = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
@@ -950,7 +1372,7 @@ Describe "Dashboard Commit Return Mode" {
     It "includes commit mode text in tab footer output" {
         Get-DashboardFooterText -CurrentTab 1 -WorkloadDetailMode "None" -CommitMode "Return" | Should -Match 'Commit & Return'
         Get-DashboardFooterText -CurrentTab 1 -WorkloadDetailMode "None" -CommitMode "Return" | Should -Match '\[R\] CommitMode'
-        Get-DashboardFooterText -CurrentTab 4 -CommitMode "Exit" | Should -Match 'CommitMode: Exit'
+        Get-DashboardFooterText -CurrentTab 4 -CommitMode "Exit" | Should -Match '\[R\] CommitMode \| \[Enter\] Commit & Exit \| \[Esc\] Cancel'
     }
 
     It "returns Exit immediately when commit mode is Exit" {

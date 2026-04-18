@@ -34,7 +34,11 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
     }
 
     It "starts an App_Workload and executes executable strings" {
-        @'
+        $tmpExe = Join-Path ([System.IO.Path]::GetTempPath()) ("orch-audio-{0}.exe" -f [Guid]::NewGuid().ToString("n"))
+        try {
+            New-Item -ItemType File -Path $tmpExe -Force | Out-Null
+            $exeForJson = $tmpExe.Replace("\", "/")
+            @"
 {
   "Hardware_Definitions": {},
   "System_Modes": {},
@@ -42,7 +46,196 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
     "Audio": {
       "Audio_Production": {
         "services": ["Audiosrv"],
-        "executables": ["'C:/Program Files/Test App/App.exe' --hidden"]
+        "executables": ["'$exeForJson' --hidden"]
+      }
+    }
+  }
+}
+"@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+            $global:mockAudioSvcPass = 0
+            Mock -CommandName Get-Service -MockWith {
+                $global:mockAudioSvcPass++
+                if ($global:mockAudioSvcPass -eq 1) {
+                    return [pscustomobject]@{
+                        Name      = "Audiosrv"
+                        Status    = [System.ServiceProcess.ServiceControllerStatus]::Stopped
+                        StartType = [System.ServiceProcess.ServiceStartMode]::Manual
+                    }
+                }
+                return [pscustomobject]@{
+                    Name      = "Audiosrv"
+                    Status    = [System.ServiceProcess.ServiceControllerStatus]::Running
+                    StartType = [System.ServiceProcess.ServiceStartMode]::Manual
+                }
+            } -ParameterFilter { $Name -eq "Audiosrv" }
+
+            Mock -CommandName gsudo -MockWith { }
+            Mock -CommandName Start-Process -MockWith { }
+
+            { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+
+            $expectedExe = [System.IO.Path]::GetFullPath($tmpExe)
+            Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+                $FilePath -eq $expectedExe -and $ArgumentList -eq "--hidden"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tmpExe -Force -ErrorAction SilentlyContinue
+            Remove-Variable -Name mockAudioSvcPass -Scope Global -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "throws when elevated service start reports failure" {
+        @'
+{
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {
+    "Audio": {
+      "Test_Workload": {
+        "services": ["Audiosrv"],
+        "executables": []
+      }
+    }
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName Get-Service -MockWith {
+            return [pscustomobject]@{
+                Name      = "Audiosrv"
+                Status    = [System.ServiceProcess.ServiceControllerStatus]::Stopped
+                StartType = [System.ServiceProcess.ServiceStartMode]::Manual
+            }
+        } -ParameterFilter { $Name -eq "Audiosrv" }
+
+        $global:elevatedServiceMockHits = 0
+        Mock -CommandName gsudo -MockWith {
+            $joined = $args -join " "
+            if ($joined -match "-EncodedCommand") {
+                $global:elevatedServiceMockHits++
+                throw "Failed to start service 'Audiosrv': simulated elevated failure"
+            }
+            "ok"
+        }
+
+        { & $script:scriptPath -WorkspaceName "Test_Workload" -Action "Start" -SkipInterceptorSync | Out-Null } | Should -Throw "*Failed to start service 'Audiosrv'*"
+        $global:elevatedServiceMockHits | Should -BeGreaterThan 0
+        Remove-Variable -Name elevatedServiceMockHits -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "refuses to start when service startup type is disabled" {
+        @'
+{
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {
+    "Audio": {
+      "Test_Workload": {
+        "services": ["Audiosrv"],
+        "executables": []
+      }
+    }
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName Get-Service -MockWith {
+            return [pscustomobject]@{
+                Name      = "Audiosrv"
+                Status    = [System.ServiceProcess.ServiceControllerStatus]::Stopped
+                StartType = [System.ServiceProcess.ServiceStartMode]::Disabled
+            }
+        } -ParameterFilter { $Name -eq "Audiosrv" }
+
+        $global:gsudoElevateAttempts = 0
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoElevateAttempts++
+            "ok"
+        }
+
+        { & $script:scriptPath -WorkspaceName "Test_Workload" -Action "Start" -SkipInterceptorSync | Out-Null } | Should -Throw "*disabled*"
+        $global:gsudoElevateAttempts | Should -Be 0
+        Remove-Variable -Name gsudoElevateAttempts -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "throws when workload executable path is missing" {
+        @'
+{
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {
+    "Audio": {
+      "X": {
+        "services": [],
+        "executables": ["'C:/This/Path/Should/Not/Exist/OrchMissing999.exe'"]
+      }
+    }
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName gsudo -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "X" -Action "Start" -SkipInterceptorSync | Out-Null } | Should -Throw "*does not exist*"
+    }
+
+    It "applies App_Workload hardware_targets when starting workload" {
+        @'
+{
+  "Hardware_Definitions": {
+    "Bluetooth_Radio": {
+      "type": "pnp_device",
+      "match": ["*Bluetooth*"]
+    }
+  },
+  "System_Modes": {},
+  "App_Workloads": {
+    "Audio": {
+      "DAW_Cubase": {
+        "services": [],
+        "executables": [],
+        "hardware_targets": {
+          "Bluetooth_Radio": "OFF"
+        }
+      }
+    }
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Process -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "DAW_Cubase" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match '^-?powershell -NoProfile -EncodedCommand ' -or $_ -match '^powershell -NoProfile -EncodedCommand ' })
+        $encodedCalls.Count | Should -Be 1
+        $encodedValue = ([regex]::Match($encodedCalls[0], '-EncodedCommand\s+(\S+)')).Groups[1].Value
+        $decoded = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedValue))
+        $decoded | Should -Match 'Disable-PnpDevice'
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "treats omitted App_Workload hardware target as ANY and skips hardware transition" {
+        @'
+{
+  "Hardware_Definitions": {
+    "Bluetooth_Radio": {
+      "type": "pnp_device",
+      "match": ["*Bluetooth*"]
+    }
+  },
+  "System_Modes": {},
+  "App_Workloads": {
+    "Audio": {
+      "DAW_Cubase": {
+        "services": [],
+        "executables": []
       }
     }
   }
@@ -52,15 +245,93 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         Mock -CommandName gsudo -MockWith { }
         Mock -CommandName Start-Process -MockWith { }
 
-        { & $script:scriptPath -WorkspaceName "Audio_Production" -Action "Start" | Out-Null } | Should -Not -Throw
+        { & $script:scriptPath -WorkspaceName "DAW_Cubase" -Action "Start" | Out-Null } | Should -Not -Throw
 
-        $expectedExe = [System.IO.Path]::GetFullPath("C:/Program Files/Test App/App.exe")
-        Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
-            $FilePath -eq $expectedExe -and $ArgumentList -eq "--hidden"
-        }
+        Assert-MockCalled -CommandName gsudo -Times 0 -Exactly
+        Assert-MockCalled -CommandName Start-Process -Times 0 -Exactly
     }
 
-    It "starts a System_Mode and formats Disable-PnpDevice EncodedCommand for OFF target" {
+    It "expands @alias hardware target key to wildcard component match" {
+        @'
+{
+  "Hardware_Definitions": {
+    "Bluetooth_Radio": {
+      "type": "pnp_device",
+      "match": ["*Bluetooth*"]
+    }
+  },
+  "System_Modes": {},
+  "App_Workloads": {
+    "Audio": {
+      "DAW_Cubase": {
+        "services": [],
+        "executables": [],
+        "hardware_targets": {
+          "@bluetooth": "OFF"
+        }
+      }
+    }
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Process -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "DAW_Cubase" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match '^-?powershell -NoProfile -EncodedCommand ' -or $_ -match '^powershell -NoProfile -EncodedCommand ' })
+        $encodedCalls.Count | Should -Be 1
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "expands @alias wildcard to multiple hardware components deterministically" {
+        @'
+{
+  "Hardware_Definitions": {
+    "Bluetooth_Radio": {
+      "type": "pnp_device",
+      "match": ["*Bluetooth*"]
+    },
+    "Bluetooth_LE": {
+      "type": "pnp_device",
+      "match": ["*Bluetooth LE*"]
+    }
+  },
+  "System_Modes": {},
+  "App_Workloads": {
+    "Audio": {
+      "DAW_Cubase": {
+        "services": [],
+        "executables": [],
+        "hardware_targets": {
+          "@bluetooth": "OFF"
+        }
+      }
+    }
+  }
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        $global:gsudoCalls = @()
+        Mock -CommandName gsudo -MockWith {
+            $global:gsudoCalls += ,($args -join " ")
+            "ok"
+        }
+        Mock -CommandName Start-Process -MockWith { }
+
+        { & $script:scriptPath -WorkspaceName "DAW_Cubase" -Action "Start" | Out-Null } | Should -Not -Throw
+
+        $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match '^-?powershell -NoProfile -EncodedCommand ' -or $_ -match '^powershell -NoProfile -EncodedCommand ' })
+        $encodedCalls.Count | Should -Be 2
+        Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It "starts a System_Mode and formats Disable-PnpDevice EncodedCommand for OFF hardware target" {
         @'
 {
   "Hardware_Definitions": {
@@ -71,7 +342,7 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
   },
   "System_Modes": {
     "Live_Stage_Life": {
-      "targets": {
+      "hardware_targets": {
         "Wi_Fi_Adapter": "OFF"
       }
     }
@@ -100,7 +371,7 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
     }
 
-    It "uses action_override_off instead of native command when desired state is OFF" {
+    It "uses action_override_off instead of native command when desired hardware state is OFF" {
         @'
 {
   "Hardware_Definitions": {
@@ -112,7 +383,7 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
   },
   "System_Modes": {
     "Live_Stage_Life": {
-      "targets": {
+      "hardware_targets": {
         "Windows_Update": "OFF"
       }
     }
@@ -127,6 +398,9 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
             "ok"
         }
         Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Test-Path -MockWith { $true } -ParameterFilter {
+            $LiteralPath -like "*DisableWU.ps1"
+        }
 
         { & $script:scriptPath -WorkspaceName "Live_Stage_Life" -Action "Start" | Out-Null } | Should -Not -Throw
 
@@ -164,6 +438,9 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
             "ok"
         }
         Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Test-Path -MockWith { $true } -ParameterFilter {
+            $LiteralPath -like "*EnableWU.ps1"
+        }
 
         { & $script:scriptPath -WorkspaceName "Windows_Update" -Action "Start" -ProfileType "Hardware_Override" | Out-Null } | Should -Not -Throw
 
@@ -254,11 +531,34 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         }
         Mock -CommandName Start-Process -MockWith { }
 
+        $global:mockWSearchPass = 0
+        Mock -CommandName Get-Service -MockWith {
+            $global:mockWSearchPass++
+            if ($global:mockWSearchPass -eq 1) {
+                return [pscustomobject]@{
+                    Name      = "WSearch"
+                    Status    = [System.ServiceProcess.ServiceControllerStatus]::Running
+                    StartType = [System.ServiceProcess.ServiceStartMode]::Automatic
+                }
+            }
+            return [pscustomobject]@{
+                Name      = "WSearch"
+                Status    = [System.ServiceProcess.ServiceControllerStatus]::Stopped
+                StartType = [System.ServiceProcess.ServiceStartMode]::Automatic
+            }
+        } -ParameterFilter { $Name -eq "WSearch" }
+
         { & $script:scriptPath -WorkspaceName "Search_Indexer" -Action "Stop" -ProfileType "Hardware_Override" | Out-Null } | Should -Not -Throw
 
-        ($global:gsudoCalls | Where-Object { $_ -match 'Stop-Service -Name WSearch' }).Count | Should -Be 1
-        ($global:gsudoCalls | Where-Object { $_ -match 'Start-Service -Name WSearch' }).Count | Should -Be 0
+        $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match 'powershell -NoProfile -EncodedCommand' })
+        $encodedCalls.Count | Should -Be 1
+        $encodedValue = ([regex]::Match($encodedCalls[0], '-EncodedCommand\s+(\S+)')).Groups[1].Value
+        $decoded = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedValue))
+        $decoded | Should -Match 'Stop-Service'
+        $decoded | Should -Match 'WSearch'
+        $decoded | Should -Not -Match 'Start-Service'
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name mockWSearchPass -Scope Global -ErrorAction SilentlyContinue
     }
 
     It "skips interceptor sync when SkipInterceptorSync is provided" {
@@ -287,7 +587,11 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
     }
 
     It "syncs managed IFEO debugger hooks when interceptors are enabled" {
-@'
+        $tmpOfficeExe = Join-Path ([System.IO.Path]::GetTempPath()) ("orch-office-{0}.exe" -f [Guid]::NewGuid().ToString("n"))
+        try {
+            New-Item -ItemType File -Path $tmpOfficeExe -Force | Out-Null
+            $officeExeJson = $tmpOfficeExe.Replace("\", "/")
+            $officeJson = @"
 {
   "_config": {
     "enable_interceptors": true
@@ -304,7 +608,7 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
     "Office": {
       "Office": {
         "services": ["ClickToRunSvc"],
-        "executables": ["'C:/Program Files/Microsoft OneDrive/OneDrive.exe'"],
+        "executables": ["'$officeExeJson'"],
         "intercepts": [
           {
             "exe": ["WINWORD.EXE", "EXCEL.EXE"],
@@ -318,17 +622,38 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
     }
   }
 }
-'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+"@
+            Set-Content -Path $script:dbPath -Value $officeJson -Encoding UTF8
 
-        $global:gsudoCalls = @()
-        Mock -CommandName gsudo -MockWith {
-            $global:gsudoCalls += ,($args -join " ")
-            "ok"
+            $global:mockCtrPass = 0
+            Mock -CommandName Get-Service -MockWith {
+                $global:mockCtrPass++
+                if ($global:mockCtrPass -eq 1) {
+                    return [pscustomobject]@{
+                        Name      = "ClickToRunSvc"
+                        Status    = [System.ServiceProcess.ServiceControllerStatus]::Stopped
+                        StartType = [System.ServiceProcess.ServiceStartMode]::Manual
+                    }
+                }
+                return [pscustomobject]@{
+                    Name      = "ClickToRunSvc"
+                    Status    = [System.ServiceProcess.ServiceControllerStatus]::Running
+                    StartType = [System.ServiceProcess.ServiceStartMode]::Manual
+                }
+            } -ParameterFilter { $Name -eq "ClickToRunSvc" }
+
+            $global:gsudoCalls = @()
+            Mock -CommandName gsudo -MockWith {
+                $global:gsudoCalls += ,($args -join " ")
+                "ok"
+            }
+            Mock -CommandName Start-Process -MockWith { }
+            Mock -CommandName Get-ChildItem -MockWith { @() }
+
+            { & $script:scriptPath -WorkspaceName "Office" -Action "Start" | Out-Null } | Should -Not -Throw
+        } finally {
+            Remove-Item -LiteralPath $tmpOfficeExe -Force -ErrorAction SilentlyContinue
         }
-        Mock -CommandName Start-Process -MockWith { }
-        Mock -CommandName Get-ChildItem -MockWith { @() }
-
-        { & $script:scriptPath -WorkspaceName "Office" -Action "Start" | Out-Null } | Should -Not -Throw
 
         $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match '^-?powershell -NoProfile -EncodedCommand ' -or $_ -match '^powershell -NoProfile -EncodedCommand ' })
         $encodedCalls.Count | Should -BeGreaterThan 0
@@ -349,6 +674,7 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         (@($decodedCalls | Where-Object { $_ -match 'Image File Execution Options\\EXCEL\.EXE' })).Count | Should -BeGreaterThan 0
 
         Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable -Name mockCtrPass -Scope Global -ErrorAction SilentlyContinue
     }
 
     It "removes only managed IFEO debugger values when interceptors are disabled" {

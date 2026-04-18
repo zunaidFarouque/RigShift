@@ -10,6 +10,9 @@ param(
     [ValidateSet("App_Workload", "System_Mode", "Hardware_Override")]
     [string]$ProfileType,
 
+    [ValidateSet("All", "HardwareOnly", "PowerPlanOnly", "ServicesOnly", "ExecutablesOnly")]
+    [string]$ExecutionScope = "All",
+
     [switch]$SkipInterceptorSync
 )
 
@@ -93,13 +96,97 @@ if ($null -ne $configProperty) {
 }
 
 $script:ExecutionWaitTimeoutMs = 15000
+# Stop/start can sit in StopPending/StartPending (e.g. Office ClickToRun).
+$script:ServiceLifecycleWaitTimeoutMs = 90000
 $script:IfeoRegistryRoot = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+
+function Wait-OrchestratorServiceDesiredStatus {
+    param(
+        [Parameter(Mandatory)][string]$ServiceName,
+        [Parameter(Mandatory)][System.ServiceProcess.ServiceControllerStatus]$DesiredStatus,
+        [Parameter(Mandatory)][int]$TimeoutMs
+    )
+
+    $deadline = [datetime]::UtcNow.AddMilliseconds($TimeoutMs)
+    $pollMs = 400
+    while ($true) {
+        $svc = Get-Service -Name $ServiceName -ErrorAction Stop
+        if ($svc.Status -eq $DesiredStatus) {
+            return
+        }
+        if ([datetime]::UtcNow -ge $deadline) {
+            throw "Service '$ServiceName' did not reach ${DesiredStatus} state within ${TimeoutMs}ms (current status: $($svc.Status))."
+        }
+        Start-Sleep -Milliseconds $pollMs
+    }
+}
 
 function Invoke-ElevatedPowerShell {
     param([Parameter(Mandatory)][string]$Command)
 
     $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Command))
     gsudo powershell -NoProfile -EncodedCommand $encoded 2>&1 | Out-Null
+}
+
+function Invoke-ElevatedServiceLifecycle {
+    param(
+        [Parameter(Mandatory)][string]$ServiceName,
+        [Parameter(Mandatory)][ValidateSet("Start", "Stop")][string]$Operation
+    )
+
+    $svc = Get-Service -Name $ServiceName -ErrorAction Stop
+
+    if ($Operation -eq "Start") {
+        if ($svc.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running) {
+            return
+        }
+        if ($svc.StartType -eq [System.ServiceProcess.ServiceStartMode]::Disabled) {
+            throw "Cannot start service '$ServiceName': startup type is disabled."
+        }
+    } else {
+        if ($svc.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+            return
+        }
+    }
+
+    # Single-quoted literal in the remote script — do NOT use "name" | ConvertFrom-Json (pipeline passes the
+    # unquoted string value, which is invalid JSON and leaves $sn null).
+    $svcNameLiteral = $ServiceName.Replace("'", "''")
+    if ($Operation -eq "Start") {
+        $body = "`$ErrorActionPreference='Stop'; `$sn = '$svcNameLiteral'; Start-Service -Name `$sn -ErrorAction Stop"
+    } else {
+        $killOfficeC2R = ""
+        if ([string]$ServiceName -eq "ClickToRunSvc") {
+            $killOfficeC2R = "foreach (`$im in @('OfficeClickToRun.exe','AppVShNotify.exe')) { Start-Process -FilePath (Join-Path `$env:SystemRoot 'System32\taskkill.exe') -ArgumentList @('/F','/IM',`$im,'/T') -Wait -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null }; "
+        }
+        $body = "`$ErrorActionPreference='Continue'; " + $killOfficeC2R +
+            "`$sn = '$svcNameLiteral'; Stop-Service -Name `$sn -Force -ErrorAction SilentlyContinue; " +
+            "`$s = Get-Service -Name `$sn -ErrorAction Stop; " +
+            "if (`$s.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running) { " +
+            "`$sc = Join-Path `$env:SystemRoot 'System32\sc.exe'; " +
+            "`$p = Start-Process -FilePath `$sc -ArgumentList @('stop',`$sn) -Wait -PassThru -WindowStyle Hidden; " +
+            "if (`$null -ne `$p -and `$p.ExitCode -ne 0) { exit 1 } }"
+    }
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($body))
+    # Assignment from native output can leave $? true even when the elevated process failed; use exit code.
+    $LASTEXITCODE = 0
+    $out = & gsudo powershell -NoProfile -EncodedCommand $encoded 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $msg = if ($null -ne $out) {
+            (@($out) | ForEach-Object { "$_" }) -join "; "
+        } else {
+            "(no output)"
+        }
+        $verb = if ($Operation -eq "Start") { "start" } else { "stop" }
+        throw "Failed to $verb service '$ServiceName': $msg"
+    }
+
+    $desired = if ($Operation -eq "Start") {
+        [System.ServiceProcess.ServiceControllerStatus]::Running
+    } else {
+        [System.ServiceProcess.ServiceControllerStatus]::Stopped
+    }
+    Wait-OrchestratorServiceDesiredStatus -ServiceName $ServiceName -DesiredStatus $desired -TimeoutMs $script:ServiceLifecycleWaitTimeoutMs
 }
 
 function Wait-ProcessWithTimeout {
@@ -218,6 +305,9 @@ function Invoke-ExecutionToken {
     if ($shouldResolveAsPath) {
         $filePath = Resolve-RepoRelativeFilePath -Path $filePath
         $filePath = [System.IO.Path]::GetFullPath($filePath)
+        if (-not (Test-Path -LiteralPath $filePath)) {
+            throw "Executable path does not exist: '$filePath'"
+        }
     }
 
     $ext = [System.IO.Path]::GetExtension($filePath).ToLowerInvariant()
@@ -319,9 +409,9 @@ function Invoke-HardwareDefinitionTransition {
             $serviceName = [string]$Definition.name
             if ([string]::IsNullOrWhiteSpace($serviceName)) { break }
             if ($DesiredState -eq "ON") {
-                gsudo Start-Service -Name $serviceName 2>&1 | Out-Null
+                Invoke-ElevatedServiceLifecycle -ServiceName $serviceName -Operation Start
             } else {
-                gsudo Stop-Service -Name $serviceName -Force 2>&1 | Out-Null
+                Invoke-ElevatedServiceLifecycle -ServiceName $serviceName -Operation Stop
             }
         }
         "registry" {
@@ -341,6 +431,72 @@ function Invoke-HardwareDefinitionTransition {
         "stateless" {
             # No native command path for stateless targets.
         }
+    }
+}
+
+function Invoke-HardwareTargetTransitions {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$HardwareTargets,
+        [Parameter(Mandatory = $true)]
+        [psobject]$HardwareDefinitions,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Start", "Stop")]
+        [string]$Action,
+        [switch]$InvertOnStop
+    )
+
+    if ($null -eq $HardwareTargets) {
+        return
+    }
+
+    $resolvedTargetMap = [ordered]@{}
+    foreach ($target in $HardwareTargets.PSObject.Properties) {
+        $targetKey = [string]$target.Name
+        $targetState = [string]$target.Value
+        if ([string]::IsNullOrWhiteSpace($targetKey)) {
+            continue
+        }
+
+        if ($targetKey.StartsWith("@")) {
+            $aliasToken = $targetKey.Substring(1).Trim()
+            if ([string]::IsNullOrWhiteSpace($aliasToken)) {
+                continue
+            }
+            $aliasPattern = "*$aliasToken*"
+            $matchedComponents = @(
+                $HardwareDefinitions.PSObject.Properties |
+                    Where-Object { [string]$_.Name -like $aliasPattern } |
+                    Sort-Object -Property Name |
+                    ForEach-Object { [string]$_.Name }
+            )
+            foreach ($matchedComponent in $matchedComponents) {
+                $resolvedTargetMap[$matchedComponent] = $targetState
+            }
+            continue
+        }
+
+        $resolvedTargetMap[$targetKey] = $targetState
+    }
+
+    foreach ($componentName in $resolvedTargetMap.Keys) {
+        $targetState = [string]$resolvedTargetMap[$componentName]
+        if ($targetState -eq "ANY") {
+            continue
+        }
+
+        $desiredState = $targetState
+        if ($Action -eq "Stop" -and $InvertOnStop.IsPresent) {
+            $desiredState = if ($targetState -eq "ON") { "OFF" } else { "ON" }
+        }
+
+        if ($null -eq $HardwareDefinitions -or $null -eq $HardwareDefinitions.PSObject.Properties[$componentName]) {
+            continue
+        }
+
+        $def = $HardwareDefinitions.PSObject.Properties[$componentName].Value
+        Invoke-HardwareDefinitionTransition -ComponentName $componentName -Definition $def -DesiredState $desiredState
     }
 }
 
@@ -525,36 +681,56 @@ if (-not [string]::IsNullOrWhiteSpace($ProfileType)) {
 
 # Phase 3/4 execution
 if ($resolvedProfileType -eq "App_Workload") {
-    if ($Action -eq "Start") {
-        foreach ($serviceName in @($resolvedProfileData.services)) {
-            if ([string]::IsNullOrWhiteSpace([string]$serviceName)) { continue }
-            gsudo Start-Service -Name ([string]$serviceName) 2>&1 | Out-Null
+    $runHardware = ($ExecutionScope -eq "All" -or $ExecutionScope -eq "HardwareOnly")
+    $runServices = ($ExecutionScope -eq "All" -or $ExecutionScope -eq "ServicesOnly")
+    $runExecutables = ($ExecutionScope -eq "All" -or $ExecutionScope -eq "ExecutablesOnly")
+
+    $appHardwareTargetsProperty = $resolvedProfileData.PSObject.Properties["hardware_targets"]
+    if ($runHardware -and $null -ne $appHardwareTargetsProperty) {
+        $hardwareDefs = $workspaces.PSObject.Properties["Hardware_Definitions"]
+        if ($null -ne $hardwareDefs) {
+            Invoke-HardwareTargetTransitions -HardwareTargets $appHardwareTargetsProperty.Value -HardwareDefinitions $hardwareDefs.Value -Action $Action -InvertOnStop
         }
-        foreach ($executionToken in @($resolvedProfileData.executables)) {
-            if ([string]::IsNullOrWhiteSpace([string]$executionToken)) { continue }
-            Invoke-ExecutionToken -ExecutionToken ([string]$executionToken)
+    }
+
+    if ($Action -eq "Start") {
+        if ($runServices) {
+            foreach ($serviceName in @($resolvedProfileData.services)) {
+                if ([string]::IsNullOrWhiteSpace([string]$serviceName)) { continue }
+                Invoke-ElevatedServiceLifecycle -ServiceName ([string]$serviceName) -Operation Start
+            }
+        }
+        if ($runExecutables) {
+            foreach ($executionToken in @($resolvedProfileData.executables)) {
+                if ([string]::IsNullOrWhiteSpace([string]$executionToken)) { continue }
+                Invoke-ExecutionToken -ExecutionToken ([string]$executionToken)
+            }
         }
 
         if ($showNotifications) {
             Show-Notification -Title "Workspace Ready" -Message "$WorkspaceName is now active."
         }
     } else {
-        $executables = @($resolvedProfileData.executables)
-        for ($i = $executables.Count - 1; $i -ge 0; $i--) {
-            $executionToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken ([string]$executables[$i])
-            $filePath = $executionToken
-            if ($executionToken -match "^'(.*?)'\s*(.*)$") {
-                $filePath = $matches[1]
-            }
-            $filePath = Resolve-RepoRelativeFilePath -Path $filePath
-            $exeName = Split-Path -Path $filePath -Leaf
-            if (-not [string]::IsNullOrWhiteSpace($exeName)) {
-                gsudo taskkill /F /IM $exeName /T 2>&1 | Out-Null
+        if ($runExecutables) {
+            $executables = @($resolvedProfileData.executables)
+            for ($i = $executables.Count - 1; $i -ge 0; $i--) {
+                $executionToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken ([string]$executables[$i])
+                $filePath = $executionToken
+                if ($executionToken -match "^'(.*?)'\s*(.*)$") {
+                    $filePath = $matches[1]
+                }
+                $filePath = Resolve-RepoRelativeFilePath -Path $filePath
+                $exeName = Split-Path -Path $filePath -Leaf
+                if (-not [string]::IsNullOrWhiteSpace($exeName)) {
+                    gsudo taskkill /F /IM $exeName /T 2>&1 | Out-Null
+                }
             }
         }
-        foreach ($serviceName in @($resolvedProfileData.services)) {
-            if ([string]::IsNullOrWhiteSpace([string]$serviceName)) { continue }
-            gsudo Stop-Service -Name ([string]$serviceName) -Force 2>&1 | Out-Null
+        if ($runServices) {
+            foreach ($serviceName in @($resolvedProfileData.services)) {
+                if ([string]::IsNullOrWhiteSpace([string]$serviceName)) { continue }
+                Invoke-ElevatedServiceLifecycle -ServiceName ([string]$serviceName) -Operation Stop
+            }
         }
 
         if ($showNotifications) {
@@ -563,28 +739,21 @@ if ($resolvedProfileType -eq "App_Workload") {
     }
 } elseif ($resolvedProfileType -eq "System_Mode") {
     $powerPlanProp = $resolvedProfileData.PSObject.Properties["power_plan"]
-    if ($Action -eq "Start" -and $null -ne $powerPlanProp -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanProp.Value)) {
+    $runHardware = ($ExecutionScope -eq "All" -or $ExecutionScope -eq "HardwareOnly")
+    $runPowerPlan = ($ExecutionScope -eq "All" -or $ExecutionScope -eq "PowerPlanOnly")
+    if ($runPowerPlan -and $Action -eq "Start" -and $null -ne $powerPlanProp -and -not [string]::IsNullOrWhiteSpace([string]$powerPlanProp.Value)) {
         Set-PowerPlanByName -PlanName ([string]$powerPlanProp.Value)
     }
 
-    foreach ($target in $resolvedProfileData.targets.PSObject.Properties) {
-        $componentName = $target.Name
-        $targetState = [string]$target.Value
-        if ($targetState -eq "ANY") {
-            continue
-        }
+    $hardwareTargets = $resolvedProfileData.PSObject.Properties["hardware_targets"]
+    if (-not $runHardware -or $null -eq $hardwareTargets) {
+        $resolvedProfileData
+        return
+    }
 
-        $desiredState = $targetState
-        if ($Action -eq "Stop") {
-            $desiredState = if ($targetState -eq "ON") { "OFF" } else { "ON" }
-        }
-
-        $hardwareDefs = $workspaces.PSObject.Properties["Hardware_Definitions"]
-        if ($null -eq $hardwareDefs -or $null -eq $hardwareDefs.Value.PSObject.Properties[$componentName]) {
-            continue
-        }
-        $def = $hardwareDefs.Value.PSObject.Properties[$componentName].Value
-        Invoke-HardwareDefinitionTransition -ComponentName $componentName -Definition $def -DesiredState $desiredState
+    $hardwareDefs = $workspaces.PSObject.Properties["Hardware_Definitions"]
+    if ($null -ne $hardwareDefs) {
+        Invoke-HardwareTargetTransitions -HardwareTargets $hardwareTargets.Value -HardwareDefinitions $hardwareDefs.Value -Action $Action -InvertOnStop
     }
 
     if ($Action -eq "Start" -and $showNotifications) {

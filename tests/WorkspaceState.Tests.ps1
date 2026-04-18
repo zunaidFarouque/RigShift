@@ -53,14 +53,14 @@ Describe "Workspace State Engine (Declarative Matrix)" {
             System_Modes = [pscustomobject]@{
                 Live_Stage_Life = [pscustomobject]@{
                     power_plan = "Ultimate Performance"
-                    targets = [pscustomobject]@{
+                    hardware_targets = [pscustomobject]@{
                         Windows_Update = "OFF"
                         GPU_Scheduling_HAGS = "OFF"
                     }
                 }
                 Eco_Life = [pscustomobject]@{
                     power_plan = "Power saver"
-                    targets = [pscustomobject]@{
+                    hardware_targets = [pscustomobject]@{
                         Display_Refresh_Rate = "ANY"
                         Bluetooth_Radio = "ANY"
                     }
@@ -187,7 +187,7 @@ Describe "Workspace State Engine (Declarative Matrix)" {
         $wuRow.IsCompliant | Should -BeFalse
     }
 
-    It "builds compliance rows once per hardware definition using active mode targets" {
+    It "builds compliance rows once per hardware definition using active mode hardware targets" {
         '{"Active_System_Mode":"Eco_Life"}' | Set-Content -Path $script:statePath -Encoding UTF8
         Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Stopped" } }
         Mock -CommandName Get-Process -MockWith { $null }

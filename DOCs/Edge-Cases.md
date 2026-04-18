@@ -4,7 +4,7 @@ This document reflects **current** behavior in `Orchestrator.ps1`, `WorkspaceSta
 
 ## 1. Race conditions and ordering
 
-**Services vs apps:** App workloads start **all** services in list order, then launch executables. The orchestrator does **not** implement sleep/timer semantics for `t 3000`-style lines (and they are not special-cased in `Invoke-ExecutionToken`). For **Dashboard** workload state, `WorkspaceState.ps1` treats `#…` and `t N` tokens as not representing a running process—see [Configuration.md](Configuration.md). If a service needs warm-up time, use a hardware-definition `action_override_on` that runs a script or shortcut which waits, or chain a small `.ps1` in `executables` that sleeps before launching the main app.
+**Global sequencing:** Dashboard commit uses a fixed seven-phase sequencer (stop execs → stop services → stop hardware → power plan → start hardware → start services → start execs). This reduces order drift from per-row commit iteration. **Scope gating:** the planner never expands the **full** mode `hardware_targets` map on commit—only **queued** components (Tab 2 **A** fills non-compliant rows; Tab 3 queues manual toggles) plus workload `hardware_targets` on **start**. A mode-only blueprint change applies **power plan** (phase 4) only. This avoids accidental hardware churn when toggling workloads or when only one device was queued.
 
 **Hardware overrides:** `action_override_*` entries run **sequentially** with `Invoke-ExecutionToken -Wait` and a finite wait (`ExecutionWaitTimeoutMs`, default 15 seconds). Hung children may be killed with a warning so the pipeline can continue.
 
@@ -12,9 +12,7 @@ This document reflects **current** behavior in `Orchestrator.ps1`, `WorkspaceSta
 
 ## 2. Shared services across workloads
 
-The Dashboard **does not** compute a global dependency graph or merge overlapping `services` arrays across workloads.
-
-`Invoke-WorkspaceCommit` iterates pending UI rows and calls the orchestrator **once per row**, with a short sleep between calls. Stopping workload **A** may stop a service that workload **B** still expects to be running.
+The Dashboard now computes one global commit plan, but service dependencies are still user-defined. If workload **A** and **B** share mutable services, the final desired workload set determines whether service start/stop phases include those entries.
 
 **Mitigation:** Design workloads so their service sets do not conflict, stop workloads in a safe order manually, or split shared infrastructure into `Hardware_Definitions` / `System_Modes` instead of per-app workload services.
 
@@ -55,6 +53,15 @@ Third-party security tools may still flag Debugger-based redirection.
 If environment variable **`RigShift_InterceptorBypass=1`** is set in the process environment when `Interceptor.ps1` runs, the script launches the target executable immediately without readiness polling or workload activation. Intended for troubleshooting only; not a supported configuration surface in `workspaces.json`.
 
 ---
+
+## 8. `@alias` wildcard expansion risk
+
+`hardware_targets` supports shorthand keys like `@bluetooth` which expand to wildcard `*bluetooth*` against `Hardware_Definitions` component ids.
+
+- A shorthand can match multiple components, which is intentional.
+- If a shorthand matches nothing, dashboard commit raises warnings and asks for explicit confirmation before continuing.
+
+Mitigation: keep component ids explicit and descriptive; review warnings before confirming commit.
 
 ## Related documentation
 

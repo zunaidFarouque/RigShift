@@ -9,6 +9,7 @@ This document matches `Orchestrator.ps1` as shipped. Parameters and order matter
 | `WorkspaceName` | Yes | Mode name (`System_Modes`), workload name (`App_Workloads`, matched across domains), hardware component name (`Hardware_Definitions` when using `Hardware_Override`), or the sentinel `__SYNC_ONLY__` (see below). |
 | `Action` | Yes | `Start` or `Stop`. |
 | `ProfileType` | No | If set: `App_Workload`, `System_Mode`, or `Hardware_Override`. Forces which branch resolves `WorkspaceName`. |
+| `ExecutionScope` | No | `All` (default), `HardwareOnly`, `PowerPlanOnly`, `ServicesOnly`, `ExecutablesOnly`. Used by the global dashboard sequencer to run phase-specific slices. |
 | `SkipInterceptorSync` | No | Switch. When present, skips the IFEO interceptor sync block (used when the Dashboard has already performed a sync pass). |
 
 ## Phase A — Load and parse
@@ -54,26 +55,28 @@ If `ProfileType` is omitted:
 
 1. For each non-empty string in `services` (in order): `gsudo Start-Service -Name …` (errors suppressed on stderr).
 2. For each non-empty `executables` token (in order): `Invoke-ExecutionToken` without wait (see [Configuration.md](Configuration.md) for token rules).
-3. Optional toast: workspace ready.
+3. If `hardware_targets` exists, component transitions are applied through `Hardware_Definitions` before service/executable actions. `@alias` keys are expanded to wildcard component matches.
+4. Optional toast: workspace ready.
 
 **Stop**
 
 1. Reverse `executables`. Resolve path; take file leaf; `gsudo taskkill /F /IM <leaf> /T` (best effort).
 2. For each `services` in **original** order: `gsudo Stop-Service -Force` (not reverse of the legacy doc—current code stops in forward order after kills).
-3. Optional toast: workspace stopped.
+3. If `hardware_targets` exists, ON/OFF values are inverted for stop behavior.
+4. Optional toast: workspace stopped.
 
 ### D2 — `System_Mode`
 
 **Start**
 
 1. If `power_plan` is a non-empty string: `Set-PowerPlanByName` (substring match against `powercfg /l` output).
-2. For each property in `targets` (component name → `ON` / `OFF` / `ANY`):
+2. For each property in `hardware_targets` (component name or `@alias` → `ON` / `OFF` / `ANY`):
    - `ANY` → skip.
    - Else load `Hardware_Definitions.<ComponentName>` if present and call `Invoke-HardwareDefinitionTransition` with desired `ON` or `OFF`.
 
 **Stop**
 
-- For each target, desired flips: `ON` becomes `OFF` and `OFF` becomes `ON` for transition purposes; `ANY` still skipped.
+- For each hardware target, desired flips: `ON` becomes `OFF` and `OFF` becomes `ON` for transition purposes; `ANY` still skipped.
 - Power plan is **not** automatically reverted on Stop unless you model that via targets and definitions.
 
 Toasts may fire on Start/Stop when notifications are enabled.
@@ -107,3 +110,37 @@ The orchestrator emits the resolved profile **object** to the pipeline at the en
 - [_schema.md](_schema.md) — entry point into configuration reference (links to readme).
 - [Audit.md](Audit.md) — doc ↔ code matrix.
 - Pester: `Orchestrator.Tests.ps1` encodes routing and interceptor ownership behavior.
+
+## Dashboard global commit sequencing
+
+Dashboard commits build a global operation plan and execute in this fixed order (buckets; only populated steps run):
+
+1. Stop executables
+2. Stop services
+3. Stop hardware components
+4. Set power plan
+5. Start hardware components
+6. Start services
+7. Start executables
+
+**User-intent gating (Dashboard planner):**
+
+- Phase **4** runs only when a **system mode row** has `CurrentState ≠ DesiredState` (blueprint change), applying `power_plan` for the **desired** active mode.
+- Phases **3** and **5** run only for hardware keys from **explicit** `PendingHardwareChanges` (Tab 2 **A** or Tab 3) and/or **workload `hardware_targets`** for workloads **starting** (transition to Active). The planner does **not** implicitly expand the full desired mode’s `hardware_targets` JSON on commit (that would reintroduce churn when only one device is queued). Tab 1 workload toggles **do not** pull in mode hardware by themselves.
+- When a workload start and the queue both mention a component, **`App_Workloads.hardware_targets` (start path) > queued hardware** for that key.
+
+Dashboard renders this operation plan with intent section headers (for example `STOPPING SERVICES`, `STARTING EXECUTABLES`) and concrete bullets in `- Reason: task` form before execution. As operations run, the display is updated so in-flight rows show `->` and completed rows show `OK`; if redraw APIs are unavailable, Dashboard falls back to append-mode updates. Internal phase numbers remain the ordering mechanism but are not shown in the user-facing commit log.
+
+If a sequenced operation fails at runtime, Dashboard applies commit-side recovery around that operation (not inside `Orchestrator.ps1` itself): failure is classified, user/policy chooses action, then the same operation may be retried, skipped, or commit may be aborted. Baseline actions are `Abort Commit`, `Skip Step`, `Retry Step`; service-disabled start failures can offer `Set StartupType Manual and Retry`.
+
+Deterministic non-interactive behavior is controlled by `_config.commit_error_policy`:
+
+- `Prompt` (default): prompt when key input is available; falls back to `Abort` when non-interactive.
+- `Abort`: abort commit on first operation failure.
+- `Skip`: skip failed operation and continue with next planned operation.
+
+Dashboard prints a compact operation outcome summary after execution (`Done | Skipped | Failed | Aborted`).
+
+Post-commit user messaging in the Dashboard is derived from this operation plan (deduped by semantic action), not from legacy pending-state rows.
+
+Contract tests: `tests\CommitSequencer.Tests.ps1`.

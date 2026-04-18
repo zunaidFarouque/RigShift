@@ -123,8 +123,9 @@ cd RigShift
 
   - `_config` controls global behavior such as notifications, interceptor sync, poll timeout, and shortcut prefixes.
   - `Hardware_Definitions` is the reusable component catalog (service, registry, PnP device, process, stateless, or scripted overrides).
-  - `System_Modes` defines power plan and desired ON/OFF/ANY state per component.
-  - `App_Workloads` defines nested domains and workloads with services, executables, tags, aliases, and optional intercept rules.
+  - `System_Modes` defines power plan and `hardware_targets` (ON/OFF/ANY per component).
+  - `App_Workloads` defines nested domains and workloads with services, executables, optional `hardware_targets`, tags, aliases, and optional intercept rules.
+  - Dashboard commit uses a deterministic seven-phase global sequencer with hardware precedence: workload `hardware_targets` > mode `hardware_targets` > `ANY`.
 
 Complete schema and token rules: [DOCs/Configuration.md](https://www.google.com/search?q=DOCs/Configuration.md)
 
@@ -155,6 +156,7 @@ Pester tests serve as behavioral contracts for core components:
 
   - `tests\Orchestrator.Tests.ps1`
   - `tests\Dashboard.Tests.ps1`
+  - `tests\CommitSequencer.Tests.ps1` — Dashboard global commit sequencer (scope gating, precedence, post-commit message derivation)
   - `tests\WorkspaceState.Tests.ps1`
   - `tests\Interceptor.Tests.ps1`
 
@@ -166,7 +168,7 @@ Invoke-Pester -OutputFormat NUnitXml -OutputFile .\tests\testResults.xml
 
 ## Limitations and safety notes
 
-  - Shared services across workloads are not dependency-resolved globally; commit order can matter when profiles overlap.
+  - Service dependency semantics are not auto-inferred; define workload/service relationships carefully when profiles overlap.
   - Workload stop operations use `taskkill` by executable leaf name and can terminate unsaved applications.
   - Workload names should be unique across all `App_Workloads` domains to avoid ambiguous resolution.
   - IFEO-based interception can interact with endpoint security policy; disable interceptors while troubleshooting policy conflicts.

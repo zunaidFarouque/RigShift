@@ -120,7 +120,7 @@
     "Normal_Life": {
       "description": "Default desktop behavior.",
       "power_plan": "Balanced",
-      "targets": {
+      "hardware_targets": {
         "GPU_Scheduling_HAGS": "ON",
         "Windows_Update": "ON",
         "Search_Indexer": "ON",
@@ -130,7 +130,7 @@
         "Ethernet_Port": "ON",
         "Bluetooth_Radio": "ON",
         "Battery_ACPI": "ON",
-        "Unnecessary_Peripherals": "ON",
+        "Other_Peripherals": "ON",
         "Display_High_Refresh_Rate": "ON",
         "Gigabyte_Control_Center": "ON",
         "Gigabyte_Fan_Battery_Control": "OFF"
@@ -140,7 +140,7 @@
       "description": "Real-time audio mode with minimized background noise.",
       "power_plan": "Max Performance",
       "post_change_message": "Live Stage mode engaged.",
-      "targets": {
+      "hardware_targets": {
         "GPU_Scheduling_HAGS": "OFF",
         "Windows_Update": "OFF",
         "Search_Indexer": "OFF",
@@ -150,7 +150,7 @@
         "Ethernet_Port": "OFF",
         "Bluetooth_Radio": "OFF",
         "Battery_ACPI": "OFF",
-        "Unnecessary_Peripherals": "OFF",
+        "Other_Peripherals": "OFF",
         "Display_High_Refresh_Rate": "OFF",
         "Gigabyte_Control_Center": "OFF",
         "Gigabyte_Fan_Battery_Control": "ON"
@@ -159,7 +159,7 @@
     "Eco_Life": {
       "description": "Battery-conscious mobile profile.",
       "power_plan": "Power saver",
-      "targets": {
+      "hardware_targets": {
         "GPU_Scheduling_HAGS": "ANY",
         "Windows_Update": "OFF",
         "Search_Indexer": "OFF",
@@ -169,7 +169,7 @@
         "Ethernet_Port": "OFF",
         "Bluetooth_Radio": "ANY",
         "Battery_ACPI": "ANY",
-        "Unnecessary_Peripherals": "OFF",
+        "Other_Peripherals": "OFF",
         "Display_High_Refresh_Rate": "ANY",
         "Gigabyte_Control_Center": "OFF",
         "Gigabyte_Fan_Battery_Control": "ON"
@@ -254,7 +254,10 @@
         "hidden": false,
         "aliases": [
           "Star Desk"
-        ]
+        ],
+        "hardware_targets": {
+          "@bluetooth": "ANY"
+        }
       }
     }
   }
