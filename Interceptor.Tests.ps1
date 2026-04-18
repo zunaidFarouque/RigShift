@@ -10,24 +10,27 @@ Describe "Interceptor workload resolution and flow" {
     BeforeEach {
         $env:WorkspaceManager_InterceptorBypass = $null
         $env:WorkspaceManager_InProcPolling = "1"
+        # App_Workloads must be nested Domain.WorkloadName per Get-AppWorkloadEntries / real workspaces.json.
         $script:workspaces = [pscustomobject]@{
             App_Workloads = [pscustomobject]@{
-                Office = [pscustomobject]@{
-                    services = @("ClickToRunSvc")
-                    executables = @("'C:/Program Files/Microsoft OneDrive/OneDrive.exe'")
-                    intercepts = @(
-                        [pscustomobject]@{
-                            exe = @("WINWORD.EXE", "EXCEL.EXE")
-                            requires = [pscustomobject]@{
-                                services = @("ClickToRunSvc")
+                Main = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                        executables = @("'C:/Program Files/Microsoft OneDrive/OneDrive.exe'")
+                        intercepts = @(
+                            [pscustomobject]@{
+                                exe = @("WINWORD.EXE", "EXCEL.EXE")
+                                requires = [pscustomobject]@{
+                                    services = @("ClickToRunSvc")
+                                }
                             }
-                        }
-                    )
-                }
-                StarDesk = [pscustomobject]@{
-                    services = @("StarDeskService")
-                    executables = @("'C:/Program Files/StarDesk/StarDesk.exe'")
-                    intercepts = @("StarDesk.exe")
+                        )
+                    }
+                    StarDesk = [pscustomobject]@{
+                        services = @("StarDeskService")
+                        executables = @("'C:/Program Files/StarDesk/StarDesk.exe'")
+                        intercepts = @("StarDesk.exe")
+                    }
                 }
             }
         }
@@ -89,14 +92,16 @@ Describe "Interceptor workload resolution and flow" {
     It "skips workloads that omit intercepts (does not throw)" {
         $ws = [pscustomobject]@{
             App_Workloads = [pscustomobject]@{
-                Office = [pscustomobject]@{
-                    services = @("ClickToRunSvc")
-                    executables = @("'C:/Program Files/Microsoft OneDrive/OneDrive.exe'")
-                }
-                StarDesk = [pscustomobject]@{
-                    services = @("StarDeskService")
-                    executables = @("'C:/Program Files/StarDesk/StarDesk.exe'")
-                    intercepts = @("StarDesk.exe")
+                Main = [pscustomobject]@{
+                    Office = [pscustomobject]@{
+                        services = @("ClickToRunSvc")
+                        executables = @("'C:/Program Files/Microsoft OneDrive/OneDrive.exe'")
+                    }
+                    StarDesk = [pscustomobject]@{
+                        services = @("StarDeskService")
+                        executables = @("'C:/Program Files/StarDesk/StarDesk.exe'")
+                        intercepts = @("StarDesk.exe")
+                    }
                 }
             }
         }
@@ -236,7 +241,7 @@ Describe "Interceptor workload resolution and flow" {
         Mock -CommandName Resolve-InterceptedWorkload -MockWith {
             [pscustomobject]@{
                 Name = "Office"
-                Workload = $script:workspaces.App_Workloads.Office
+                Workload = $script:workspaces.App_Workloads.Main.Office
                 RequiredServices = @("ClickToRunSvc")
                 RequiredExecutables = @()
             }

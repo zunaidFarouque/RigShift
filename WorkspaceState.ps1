@@ -261,7 +261,8 @@ function Get-WorkspaceState {
         }
     }
 
-    $appWorkloadResults = @{}
+    # Ordered so AppWorkloads property order matches priority/name sort (tests and UI rely on this).
+    $appWorkloadResults = [ordered]@{}
     foreach ($entry in @(Get-AppWorkloadEntries -AppWorkloads $appWorkloads)) {
         $workloadName = [string]$entry.Name
         $workload = $entry.Workload

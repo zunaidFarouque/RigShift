@@ -45,29 +45,83 @@ $wshShell = New-Object -ComObject WScript.Shell
 $orchestratorPath = Join-Path -Path $PSScriptRoot -ChildPath "Orchestrator.ps1"
 $metadataKeys = @("_config", "comment", "description")
 
-foreach ($workspaceName in $db.PSObject.Properties.Name) {
-    if ($metadataKeys -contains $workspaceName) {
-        continue
-    }
+function Get-ShortcutModeFromNode {
+    param([object]$Node)
 
-    $shortcutMode = "both"
-    $wsObj = $db.PSObject.Properties[$workspaceName].Value
-    if ($wsObj -is [pscustomobject]) {
-        $createForProperty = $wsObj.PSObject.Properties["create_shortcut_for"]
-        if ($null -ne $createForProperty) {
-            $raw = [string]$createForProperty.Value
-            if (-not [string]::IsNullOrWhiteSpace($raw)) {
-                $normalized = $raw.Trim().ToLowerInvariant()
-                switch ($normalized) {
-                    "none" { $shortcutMode = "none" }
-                    "start" { $shortcutMode = "start" }
-                    "stop" { $shortcutMode = "stop" }
-                    default {
-                        throw "Invalid create_shortcut_for for workspace '$workspaceName': '$raw'. Allowed values: none, start, stop."
-                    }
-                }
-            }
+    if ($null -eq $Node -or $Node -isnot [pscustomobject]) {
+        return "both"
+    }
+    $createForProperty = $Node.PSObject.Properties["create_shortcut_for"]
+    if ($null -eq $createForProperty) {
+        return "both"
+    }
+    $raw = [string]$createForProperty.Value
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return "both"
+    }
+    $normalized = $raw.Trim().ToLowerInvariant()
+    switch ($normalized) {
+        "none" { return "none" }
+        "start" { return "start" }
+        "stop" { return "stop" }
+        default {
+            throw "Invalid create_shortcut_for: '$raw'. Allowed values: none, start, stop."
         }
+    }
+}
+
+function Add-ShortcutTarget {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [object]$Node,
+        [Parameter(Mandatory)][System.Collections.Generic.Dictionary[string, object]]$Seen
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return
+    }
+    if ($Seen.ContainsKey($Name)) {
+        Write-Warning (
+            "Skipping duplicate shortcut name '$Name'. " +
+            "The orchestrator resolves workloads by name across domains in definition order; only one shortcut can use this filename."
+        )
+        return
+    }
+    [void]$Seen.Add($Name, $true)
+    return [pscustomobject]@{
+        Name = $Name
+        Node = $Node
+    }
+}
+
+$targets = [System.Collections.Generic.List[object]]::new()
+$seenNames = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+$systemModesProp = $db.PSObject.Properties["System_Modes"]
+if ($null -ne $systemModesProp -and $null -ne $systemModesProp.Value) {
+    foreach ($modeProp in $systemModesProp.Value.PSObject.Properties) {
+        $t = Add-ShortcutTarget -Name $modeProp.Name -Node $modeProp.Value -Seen $seenNames
+        if ($null -ne $t) { $targets.Add($t) }
+    }
+}
+
+$appWorkloadsProp = $db.PSObject.Properties["App_Workloads"]
+if ($null -ne $appWorkloadsProp -and $null -ne $appWorkloadsProp.Value) {
+    foreach ($domainProp in $appWorkloadsProp.Value.PSObject.Properties) {
+        if ($null -eq $domainProp.Value) { continue }
+        foreach ($workloadProp in $domainProp.Value.PSObject.Properties) {
+            $t = Add-ShortcutTarget -Name $workloadProp.Name -Node $workloadProp.Value -Seen $seenNames
+            if ($null -ne $t) { $targets.Add($t) }
+        }
+    }
+}
+
+foreach ($target in $targets) {
+    $workspaceName = [string]$target.Name
+    try {
+        $shortcutMode = Get-ShortcutModeFromNode -Node $target.Node
+    } catch {
+        throw ("Invalid create_shortcut_for for shortcut target '{0}': {1}" -f $workspaceName, $_.Exception.Message)
     }
 
     if ($shortcutMode -eq "both" -or $shortcutMode -eq "start") {

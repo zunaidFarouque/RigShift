@@ -46,7 +46,7 @@ The default folder name matches the GitHub repository name (`WorkspaceManager`).
 
 **2. Edit `workspaces.json`**
 
-Follow [DOCs/Configuration.md](DOCs/Configuration.md) (summary entry point: [SCHEMA.md](SCHEMA.md)). Minimal shape:
+Follow [DOCs/Configuration.md](DOCs/Configuration.md) (summary entry point: [Schema.md](Schema.md)). Minimal shape:
 
 ```json
 {
@@ -105,7 +105,7 @@ Optional desktop shortcut with icon: `pwsh -File .\Create-DashboardShortcut.ps1`
 
 | Document | Topic |
 |----------|--------|
-| [SCHEMA.md](SCHEMA.md) | Pointer to full configuration reference |
+| [Schema.md](Schema.md) | Pointer to full configuration reference |
 | [DOCs/Configuration.md](DOCs/Configuration.md) | JSON schema, tokens, shortcuts, intercepts |
 | [DOCs/Architecture.md](DOCs/Architecture.md) | Components and data flow |
 | [DOCs/Orchestrator-Flow.md](DOCs/Orchestrator-Flow.md) | Orchestrator phases and parameters |

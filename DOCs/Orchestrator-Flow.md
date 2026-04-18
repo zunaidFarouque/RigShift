@@ -102,6 +102,8 @@ The orchestrator emits the resolved profile **object** to the pipeline at the en
 
 - [Architecture.md](Architecture.md) — mental model.
 - [Configuration.md](Configuration.md) — JSON schema and execution tokens.
-- [SCHEMA.md](../SCHEMA.md) — entry point into configuration reference.
+- [Dashboard.md](Dashboard.md) — interactive console UI.
+- [Edge-Cases.md](Edge-Cases.md) — operational caveats.
+- [Schema.md](../Schema.md) — entry point into configuration reference.
 - [Audit.md](Audit.md) — doc ↔ code matrix.
 - Pester: `Orchestrator.Tests.ps1` encodes routing and interceptor ownership behavior.

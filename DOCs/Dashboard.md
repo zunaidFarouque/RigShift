@@ -132,5 +132,5 @@ When you press **Enter** to commit:
 - [Orchestrator-Flow.md](Orchestrator-Flow.md) — orchestrator phases including `__SYNC_ONLY__`.
 - [Edge-Cases.md](Edge-Cases.md) — operational caveats.
 - [Architecture.md](Architecture.md) — components and data flow.
-- [SCHEMA.md](../SCHEMA.md) — configuration entry point.
+- [Schema.md](../Schema.md) — configuration entry point.
 - [Audit.md](Audit.md) — doc ↔ code matrix.

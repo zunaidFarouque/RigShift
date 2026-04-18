@@ -62,5 +62,5 @@ If environment variable **`WorkspaceManager_InterceptorBypass=1`** is set in the
 - [Orchestrator-Flow.md](Orchestrator-Flow.md) — phases and IFEO sync.
 - [Dashboard.md](Dashboard.md) — Tab 4 `Reset_Interceptors`.
 - [Architecture.md](Architecture.md) — component overview.
-- [SCHEMA.md](../SCHEMA.md) — configuration entry point.
+- [Schema.md](../Schema.md) — configuration entry point.
 - [Audit.md](Audit.md) — doc ↔ code matrix.

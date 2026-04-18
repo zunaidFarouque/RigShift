@@ -4,7 +4,7 @@ WorkspaceManager is a declarative Windows state tool. You describe **what should
 
 **Naming:** User-facing strings (toasts, window titles, Start Menu folder) use **WorkspaceManager**. Managed IFEO registry values include `WorkspaceManager_Owner`, which is set to the fixed literal **`BG-Services-Orchestrator`** in `Orchestrator.ps1` so cleanup only touches hooks owned by this deployment (see [Edge-Cases.md](Edge-Cases.md)).
 
-The full JSON contract lives in [Configuration.md](Configuration.md); [SCHEMA.md](../SCHEMA.md) is a short entry point into that document.
+The full JSON contract lives in [Configuration.md](Configuration.md); [Schema.md](../Schema.md) is a short entry point into that document.
 
 ## 1. Configuration layout (`workspaces.json`)
 

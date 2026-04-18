@@ -201,5 +201,5 @@ Workspace state and compliance rows are computed in `WorkspaceState.ps1` and `Da
 - [Orchestrator-Flow.md](Orchestrator-Flow.md)
 - [Dashboard.md](Dashboard.md)
 - [Edge-Cases.md](Edge-Cases.md)
-- [SCHEMA.md](../SCHEMA.md) (pointer into this file)
+- [Schema.md](../Schema.md) (pointer into this file)
 - [Audit.md](Audit.md) (doc ↔ code matrix)
