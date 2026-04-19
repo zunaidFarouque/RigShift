@@ -85,6 +85,39 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         }
     }
 
+    It "starts an App_Workload with executables only and no services property without throwing" {
+        $tmpExe = Join-Path ([System.IO.Path]::GetTempPath()) ("orch-exeonly-{0}.exe" -f [Guid]::NewGuid().ToString("n"))
+        try {
+            New-Item -ItemType File -Path $tmpExe -Force | Out-Null
+            $exeForJson = $tmpExe.Replace("\", "/")
+            @"
+{
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {
+    "Tools": {
+      "ExecOnly": {
+        "executables": ["'$exeForJson'"]
+      }
+    }
+  }
+}
+"@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+            Mock -CommandName gsudo -MockWith { }
+            Mock -CommandName Start-Process -MockWith { }
+
+            { & $script:scriptPath -WorkspaceName "ExecOnly" -Action "Start" -SkipInterceptorSync | Out-Null } | Should -Not -Throw
+
+            $expectedExe = [System.IO.Path]::GetFullPath($tmpExe)
+            Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+                $FilePath -eq $expectedExe
+            }
+        } finally {
+            Remove-Item -LiteralPath $tmpExe -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "throws when elevated service start reports failure" {
         @'
 {

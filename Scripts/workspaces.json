@@ -258,6 +258,22 @@
         "hardware_targets": {
           "@bluetooth": "ANY"
         }
+      },
+      "Usual (Music+CopyQ+DLer)": {
+        "description": "Taskbar media controls, CopyQ clipboard manager, and Neat Download Manager.",
+        "executables": [
+          "'D:/_installed/scoop/apps/taskbarmediacontrols-plus/current/TaskbarMediaControlsPlus.exe'",
+          "'C:/Users/Zunaid/AppData/Local/Programs/CopyQ/copyq.exe'",
+          "'D:/_installed/scoop/apps/neatdownloadmanager/1.4/NeatDM.exe'"
+        ],
+        "tags": [
+          "media",
+          "clipboard",
+          "downloads"
+        ],
+        "priority": 25,
+        "favorite": false,
+        "hidden": false
       }
     }
   }

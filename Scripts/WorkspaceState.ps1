@@ -1,3 +1,5 @@
+. (Join-Path -Path $PSScriptRoot -ChildPath "JsonWorkloadHelpers.ps1")
+
 function Get-WorkspaceRepoRoot {
     $configDir = $PSScriptRoot
     $wsJson = Join-Path -Path $configDir -ChildPath "workspaces.json"
@@ -283,7 +285,7 @@ function Get-WorkspaceState {
         $serviceDetails = @()
         $executableDetails = @()
 
-        foreach ($serviceName in @($workload.services)) {
+        foreach ($serviceName in @(Get-JsonObjectOptionalStringArray -InputObject $workload -PropertyName "services")) {
             $name = [string]$serviceName
             if ([string]::IsNullOrWhiteSpace($name) -or $name -match '^#' -or $name -match '^t\s+(\d+)$') { continue }
             $totalChecks++
@@ -298,7 +300,7 @@ function Get-WorkspaceState {
             }
         }
 
-        foreach ($executionToken in @($workload.executables)) {
+        foreach ($executionToken in @(Get-JsonObjectOptionalStringArray -InputObject $workload -PropertyName "executables")) {
             $token = [string]$executionToken
             if ([string]::IsNullOrWhiteSpace($token) -or $token -match '^#' -or $token -match '^t\s+(\d+)$') { continue }
             $totalChecks++
@@ -318,11 +320,11 @@ function Get-WorkspaceState {
             MatchedChecks = $matchedChecks
             TotalChecks   = $totalChecks
             Domain        = [string]$entry.Domain
-            Tags          = @($workload.tags | ForEach-Object { [string]$_ })
+            Tags          = @(Get-JsonObjectOptionalStringArray -InputObject $workload -PropertyName "tags")
             Priority      = [int]$entry.Priority
             Favorite      = ($workload.favorite -eq $true)
             Hidden        = ($workload.hidden -eq $true)
-            Aliases       = @($workload.aliases | ForEach-Object { [string]$_ })
+            Aliases       = @(Get-JsonObjectOptionalStringArray -InputObject $workload -PropertyName "aliases")
             RuntimeDetails = [pscustomobject]@{
                 Services      = @($serviceDetails)
                 Executables   = @($executableDetails)

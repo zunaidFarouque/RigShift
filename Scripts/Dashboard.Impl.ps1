@@ -11,6 +11,7 @@ $Host.UI.RawUI.WindowTitle = "RigShift Dashboard"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 . (Join-Path -Path $PSScriptRoot -ChildPath "WorkspaceState.ps1")
+. (Join-Path -Path $PSScriptRoot -ChildPath "ExecutionTokenPath.ps1")
 
 $script:ComplianceData = @()
 $script:WorkloadStates = @()
@@ -486,8 +487,21 @@ function Invoke-DashboardCommitFlow {
         Write-Host "Commit cancelled by user." -ForegroundColor Yellow
         return "ReturnToDashboard"
     }
+
+    $preflightDecisions = @{}
+    if (@($operations).Count -gt 0) {
+        $repoRoot = Get-WorkspaceRepoRoot
+        $preflightIssues = @(Get-DashboardCommitPreflightIssues -Operations $operations -Workspaces $Workspaces -RepoRoot $repoRoot)
+        $preflightResult = Resolve-DashboardCommitPreflightDecisions -Issues $preflightIssues -Workspaces $Workspaces -ReadKeyScript $ReadKeyScript
+        if (-not $preflightResult.Continue) {
+            Write-Host "Commit cancelled by user." -ForegroundColor Yellow
+            return "ReturnToDashboard"
+        }
+        $preflightDecisions = $preflightResult.ByOperationKey
+    }
+
     $pendingStates = @(Get-DashboardPendingCommitStates -WorkloadStates $WorkloadStates -PendingHardwareChanges $PendingHardwareChanges)
-    Invoke-DashboardCommit -PendingStates $pendingStates -PendingHardwareChanges $PendingHardwareChanges -OrchestratorPath $OrchestratorPath -JsonPath $JsonPath -Workspaces $Workspaces -SettingsRows $SettingsRows -Operations $operations -ReadKeyScript $ReadKeyScript
+    Invoke-DashboardCommit -PendingStates $pendingStates -PendingHardwareChanges $PendingHardwareChanges -OrchestratorPath $OrchestratorPath -JsonPath $JsonPath -Workspaces $Workspaces -SettingsRows $SettingsRows -Operations $operations -ReadKeyScript $ReadKeyScript -PreflightDecisionsByOperationKey $preflightDecisions
 
     $messageStates = @(Convert-DashboardOperationsToMessageStates -Operations $operations)
     if ($messageStates.Count -eq 0) {
@@ -805,6 +819,52 @@ function Resolve-DashboardWorkloadByName {
     return $null
 }
 
+function Test-DashboardAppWorkloadHasActionableServices {
+    [CmdletBinding()]
+    param(
+        [psobject]$Workspaces,
+        [string]$WorkloadName
+    )
+
+    if ($null -eq $Workspaces -or $null -eq $Workspaces.PSObject.Properties["App_Workloads"]) {
+        return $false
+    }
+    $node = Resolve-DashboardWorkloadByName -AppWorkloads $Workspaces.App_Workloads -WorkloadName $WorkloadName
+    # Workload missing from JSON: keep prior behavior and still schedule the phase.
+    if ($null -eq $node) {
+        return $true
+    }
+    foreach ($s in @(Get-JsonObjectOptionalStringArray -InputObject $node -PropertyName "services")) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$s)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-DashboardAppWorkloadHasActionableExecutables {
+    [CmdletBinding()]
+    param(
+        [psobject]$Workspaces,
+        [string]$WorkloadName
+    )
+
+    if ($null -eq $Workspaces -or $null -eq $Workspaces.PSObject.Properties["App_Workloads"]) {
+        return $false
+    }
+    $node = Resolve-DashboardWorkloadByName -AppWorkloads $Workspaces.App_Workloads -WorkloadName $WorkloadName
+    # Workload missing from JSON: keep prior behavior and still schedule the phase.
+    if ($null -eq $node) {
+        return $true
+    }
+    foreach ($e in @(Get-JsonObjectOptionalStringArray -InputObject $node -PropertyName "executables")) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$e)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Resolve-DashboardHardwareTargetMap {
     [CmdletBinding()]
     param(
@@ -957,10 +1017,14 @@ function Build-DashboardCommitOperations {
     $effectiveHardware = Resolve-DashboardEffectiveHardwareTargets -Workspaces $Workspaces -ModeStates $ModeStates -WorkloadStates $WorkloadStates -PendingHardwareChanges $PendingHardwareChanges -WarningsRef $WarningsRef -IncludeSystemModeHardware:$false -ApplyWorkloadHardwareForNames $workloadStartNames -ReasonMap $hardwareReasonMap
 
     foreach ($wl in $workloadsToStop) {
-        $ops.Add([pscustomobject]@{ Phase = 1; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Stop"; ExecutionScope = "ExecutablesOnly"; Reason = ("Stop {0}" -f [string]$wl.Name) })
+        if (Test-DashboardAppWorkloadHasActionableExecutables -Workspaces $Workspaces -WorkloadName ([string]$wl.Name)) {
+            $ops.Add([pscustomobject]@{ Phase = 1; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Stop"; ExecutionScope = "ExecutablesOnly"; Reason = ("Stop {0}" -f [string]$wl.Name) })
+        }
     }
     foreach ($wl in $workloadsToStop) {
-        $ops.Add([pscustomobject]@{ Phase = 2; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Stop"; ExecutionScope = "ServicesOnly"; Reason = ("Stop {0}" -f [string]$wl.Name) })
+        if (Test-DashboardAppWorkloadHasActionableServices -Workspaces $Workspaces -WorkloadName ([string]$wl.Name)) {
+            $ops.Add([pscustomobject]@{ Phase = 2; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Stop"; ExecutionScope = "ServicesOnly"; Reason = ("Stop {0}" -f [string]$wl.Name) })
+        }
     }
     foreach ($component in @($effectiveHardware.Keys | Sort-Object)) {
         if ([string]$effectiveHardware[$component] -eq "OFF") {
@@ -976,10 +1040,14 @@ function Build-DashboardCommitOperations {
         }
     }
     foreach ($wl in $workloadsToStart) {
-        $ops.Add([pscustomobject]@{ Phase = 6; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = ("Start {0}" -f [string]$wl.Name) })
+        if (Test-DashboardAppWorkloadHasActionableServices -Workspaces $Workspaces -WorkloadName ([string]$wl.Name)) {
+            $ops.Add([pscustomobject]@{ Phase = 6; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ServicesOnly"; Reason = ("Start {0}" -f [string]$wl.Name) })
+        }
     }
     foreach ($wl in $workloadsToStart) {
-        $ops.Add([pscustomobject]@{ Phase = 7; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = ("Start {0}" -f [string]$wl.Name) })
+        if (Test-DashboardAppWorkloadHasActionableExecutables -Workspaces $Workspaces -WorkloadName ([string]$wl.Name)) {
+            $ops.Add([pscustomobject]@{ Phase = 7; WorkspaceName = [string]$wl.Name; ProfileType = "App_Workload"; Action = "Start"; ExecutionScope = "ExecutablesOnly"; Reason = ("Start {0}" -f [string]$wl.Name) })
+        }
     }
 
     return @($ops | Sort-Object -Property Phase, WorkspaceName)
@@ -1627,6 +1695,231 @@ function Confirm-DashboardWarningsBeforeCommit {
     return ($keyInfo.Key -eq [ConsoleKey]::Y)
 }
 
+function Get-DashboardCommitPreflightIssues {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [array]$Operations,
+        [psobject]$Workspaces = $null,
+        [string]$RepoRoot = ""
+    )
+
+    $issues = [System.Collections.Generic.List[object]]::new()
+    if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $RepoRoot = Get-WorkspaceRepoRoot
+    }
+
+    $sortedOps = @(
+        $Operations |
+            Sort-Object -Property @{ Expression = { [int]$_.Phase } }, @{ Expression = { [string]$_.WorkspaceName } }, @{ Expression = { [string]$_.ExecutionScope } }
+    )
+
+    foreach ($op in $sortedOps) {
+        if ($null -eq $op) { continue }
+        $opKey = Get-DashboardCommitOperationKey -Operation $op
+        $profileType = [string]$op.ProfileType
+        $action = [string]$op.Action
+        $scope = [string]$op.ExecutionScope
+        $wsName = [string]$op.WorkspaceName
+
+        if ($profileType -eq "App_Workload" -and $action -eq "Start" -and $scope -eq "ServicesOnly") {
+            $svcNames = @(Resolve-DashboardOperationServiceNames -Operation $op -Workspaces $Workspaces)
+            foreach ($svcName in $svcNames) {
+                try {
+                    $svc = Get-Service -Name $svcName -ErrorAction Stop
+                    if ($svc.StartType -eq [System.ServiceProcess.ServiceStartMode]::Disabled) {
+                        $issues.Add([pscustomobject]@{
+                            OperationKey   = $opKey
+                            Category       = "ServiceDisabled"
+                            Message        = "Service '$svcName' has startup type Disabled."
+                            ServiceName    = $svcName
+                            ExecutionToken = ""
+                            ResolvedPath   = ""
+                        })
+                    }
+                } catch {
+                    # Missing or inaccessible service: not part of MVP preflight.
+                }
+            }
+        } elseif ($profileType -eq "App_Workload" -and $action -eq "Start" -and $scope -eq "ExecutablesOnly") {
+            $workloadNode = $null
+            if ($null -ne $Workspaces -and $null -ne $Workspaces.PSObject.Properties["App_Workloads"]) {
+                $workloadNode = Resolve-DashboardWorkloadByName -AppWorkloads $Workspaces.App_Workloads -WorkloadName $wsName
+            }
+            if ($null -ne $workloadNode -and $null -ne $workloadNode.PSObject.Properties["executables"]) {
+                foreach ($exeTok in @($workloadNode.executables)) {
+                    if ([string]::IsNullOrWhiteSpace([string]$exeTok)) { continue }
+                    $pathInfo = Get-ExecutionTokenFilesystemCheckInfo -RepoRoot $RepoRoot -ExecutionToken ([string]$exeTok)
+                    if ($pathInfo.RequiresPathCheck -and -not $pathInfo.PathExists) {
+                        $issues.Add([pscustomobject]@{
+                            OperationKey   = $opKey
+                            Category       = "NotFound"
+                            Message        = "Executable path does not exist: '$($pathInfo.ResolvedFullPath)'"
+                            ServiceName    = ""
+                            ExecutionToken = [string]$exeTok
+                            ResolvedPath   = [string]$pathInfo.ResolvedFullPath
+                        })
+                    }
+                }
+            }
+        } elseif ($profileType -eq "Hardware_Override") {
+            $hwNode = $null
+            if ($null -ne $Workspaces -and $null -ne $Workspaces.PSObject.Properties["Hardware_Definitions"] -and $null -ne $Workspaces.Hardware_Definitions.PSObject.Properties[$wsName]) {
+                $hwNode = $Workspaces.Hardware_Definitions.PSObject.Properties[$wsName].Value
+            }
+            if ($null -eq $hwNode) { continue }
+
+            if ($action -eq "Start" -and [string]$hwNode.type -eq "service" -and $null -ne $hwNode.PSObject.Properties["name"]) {
+                $sn = [string]$hwNode.name
+                if (-not [string]::IsNullOrWhiteSpace($sn)) {
+                    try {
+                        $svc = Get-Service -Name $sn -ErrorAction Stop
+                        if ($svc.StartType -eq [System.ServiceProcess.ServiceStartMode]::Disabled) {
+                            $issues.Add([pscustomobject]@{
+                                OperationKey   = $opKey
+                                Category       = "ServiceDisabled"
+                                Message        = "Service '$sn' has startup type Disabled."
+                                ServiceName    = $sn
+                                ExecutionToken = ""
+                                ResolvedPath   = ""
+                            })
+                        }
+                    } catch {
+                    }
+                }
+            }
+
+            $ovProp = if ($action -eq "Start") { "action_override_on" } else { "action_override_off" }
+            if ($null -ne $hwNode.PSObject.Properties[$ovProp]) {
+                foreach ($tok in @($hwNode.$ovProp)) {
+                    if ([string]::IsNullOrWhiteSpace([string]$tok)) { continue }
+                    $pathInfo = Get-ExecutionTokenFilesystemCheckInfo -RepoRoot $RepoRoot -ExecutionToken ([string]$tok)
+                    if ($pathInfo.RequiresPathCheck -and -not $pathInfo.PathExists) {
+                        $issues.Add([pscustomobject]@{
+                            OperationKey   = $opKey
+                            Category       = "NotFound"
+                            Message        = "Override script path does not exist: '$($pathInfo.ResolvedFullPath)'"
+                            ServiceName    = ""
+                            ExecutionToken = [string]$tok
+                            ResolvedPath   = [string]$pathInfo.ResolvedFullPath
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    return @($issues)
+}
+
+function Resolve-DashboardPreflightIssueMenuOptions {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Issue
+    )
+
+    $options = [System.Collections.Generic.List[object]]::new()
+    $options.Add([pscustomobject]@{ Id = "AbortCommit"; Label = "Abort Commit" })
+    $options.Add([pscustomobject]@{ Id = "SkipOperation"; Label = "Skip Operation" })
+    if ([string]$Issue.Category -eq "ServiceDisabled" -and -not [string]::IsNullOrWhiteSpace([string]$Issue.ServiceName)) {
+        $options.Add([pscustomobject]@{ Id = "SetServiceManualAndProceed"; Label = ("Set service '{0}' startup to Manual and Proceed" -f [string]$Issue.ServiceName) })
+    }
+    return @($options)
+}
+
+function Select-DashboardPreflightIssueAction {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Issue,
+        [Parameter(Mandatory = $true)]
+        [array]$Options,
+        [scriptblock]$ReadKeyScript = $null
+    )
+
+    Write-Host ""
+    Write-Host ("=== PREFLIGHT ({0}) ===" -f [string]$Issue.Category) -ForegroundColor Yellow
+    Write-Host ("Target: {0}" -f [string]$Issue.OperationKey) -ForegroundColor White
+    Write-Host ("Reason: {0}" -f [string]$Issue.Message) -ForegroundColor DarkYellow
+    Write-Host "Choose action:" -ForegroundColor White
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        Write-Host ("{0}) {1}" -f ($i + 1), [string]$Options[$i].Label) -ForegroundColor Cyan
+    }
+    Write-Host "Esc — Abort commit (same as option 1)." -ForegroundColor DarkGray
+
+    while ($true) {
+        $keyInfo = if ($null -ne $ReadKeyScript) { & $ReadKeyScript } else { [Console]::ReadKey($true) }
+        if ($null -eq $keyInfo) { continue }
+        if ($keyInfo.Key -eq [ConsoleKey]::Escape) {
+            return "AbortCommit"
+        }
+        $keyChar = [string]$keyInfo.KeyChar
+        if ($keyChar -match "^[1-9]$") {
+            $idx = [int]$keyChar - 1
+            if ($idx -ge 0 -and $idx -lt $Options.Count) {
+                return [string]$Options[$idx].Id
+            }
+        }
+    }
+}
+
+function Resolve-DashboardCommitPreflightDecisions {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [array]$Issues,
+        [psobject]$Workspaces = $null,
+        [scriptblock]$ReadKeyScript = $null
+    )
+
+    $empty = @{}
+    if (@($Issues).Count -eq 0) {
+        return [pscustomobject]@{ Continue = $true; ByOperationKey = $empty }
+    }
+
+    $policyInfo = Get-DashboardCommitErrorPolicy -Workspaces $Workspaces -ReadKeyScript $ReadKeyScript
+
+    if ([string]$policyInfo.EffectivePolicy -eq "Abort") {
+        return [pscustomobject]@{ Continue = $false; ByOperationKey = $empty }
+    }
+
+    if ([string]$policyInfo.EffectivePolicy -eq "Skip") {
+        $byOp = @{}
+        foreach ($iss in @($Issues)) {
+            $byOp[[string]$iss.OperationKey] = "SkipOperation"
+        }
+        return [pscustomobject]@{ Continue = $true; ByOperationKey = $byOp }
+    }
+
+    $byOp = @{}
+    $skippedOps = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($iss in @($Issues)) {
+        $k = [string]$iss.OperationKey
+        if ($skippedOps.Contains($k)) {
+            continue
+        }
+
+        $options = @(Resolve-DashboardPreflightIssueMenuOptions -Issue $iss)
+        $choice = Select-DashboardPreflightIssueAction -Issue $iss -Options $options -ReadKeyScript $ReadKeyScript
+        if ($choice -eq "AbortCommit") {
+            return [pscustomobject]@{ Continue = $false; ByOperationKey = $empty }
+        }
+        if ($choice -eq "SkipOperation") {
+            $byOp[$k] = "SkipOperation"
+            [void]$skippedOps.Add($k)
+            continue
+        }
+        if ($choice -eq "SetServiceManualAndProceed") {
+            Invoke-DashboardSetServiceStartupManual -ServiceName ([string]$iss.ServiceName)
+        }
+    }
+
+    return [pscustomobject]@{ Continue = $true; ByOperationKey = $byOp }
+}
+
 function Invoke-DashboardCommitOperations {
     [CmdletBinding()]
     param(
@@ -1635,14 +1928,30 @@ function Invoke-DashboardCommitOperations {
         [Parameter(Mandatory = $true)]
         [string]$OrchestratorPath,
         [psobject]$Workspaces = $null,
-        [scriptblock]$ReadKeyScript = $null
+        [scriptblock]$ReadKeyScript = $null,
+        [hashtable]$PreflightDecisionsByOperationKey = $null
     )
+
+    $decisions = if ($null -eq $PreflightDecisionsByOperationKey) { @{} } else { $PreflightDecisionsByOperationKey }
 
     $rows = @(New-DashboardCommitProgressRows -Operations $Operations -Workspaces $Workspaces)
     $renderState = @{}
     Write-DashboardProgressDisplay -Rows $rows -RenderState $renderState
     $outcomes = [System.Collections.Generic.List[object]]::new()
     foreach ($op in @($Operations)) {
+        $opKey = Get-DashboardCommitOperationKey -Operation $op
+        if ($decisions.ContainsKey($opKey) -and [string]$decisions[$opKey] -eq "SkipOperation") {
+            Set-DashboardProgressRowStatusForOperation -Rows $rows -Operation $op -Status "Skipped"
+            Write-DashboardProgressDisplay -Rows $rows -RenderState $renderState -UseCursorRedraw
+            $outcomes.Add([pscustomobject]@{
+                OperationKey = $opKey
+                Result = "Skipped"
+                Attempts = 0
+                FailureCategory = "PreflightSkipped"
+            })
+            continue
+        }
+
         $result = Invoke-DashboardOperationWithRecovery -Operation $op -OrchestratorPath $OrchestratorPath -Rows $rows -RenderState $renderState -Workspaces $Workspaces -ReadKeyScript $ReadKeyScript
         $outcomes.Add([pscustomobject]@{
             OperationKey = Get-DashboardCommitOperationKey -Operation $op
@@ -1678,7 +1987,9 @@ function Invoke-DashboardCommit {
         [Parameter(Mandatory = $false)]
         [array]$Operations = @(),
         [Parameter(Mandatory = $false)]
-        [scriptblock]$ReadKeyScript = $null
+        [scriptblock]$ReadKeyScript = $null,
+        [Parameter(Mandatory = $false)]
+        [hashtable]$PreflightDecisionsByOperationKey = $null
     )
 
     $settingsRowsArray = @($SettingsRows)
@@ -1697,7 +2008,8 @@ function Invoke-DashboardCommit {
     }
 
     if (@($Operations).Count -gt 0) {
-        Invoke-DashboardCommitOperations -Operations $Operations -OrchestratorPath $OrchestratorPath -Workspaces $Workspaces -ReadKeyScript $ReadKeyScript
+        $preflightMap = if ($null -eq $PreflightDecisionsByOperationKey) { @{} } else { $PreflightDecisionsByOperationKey }
+        Invoke-DashboardCommitOperations -Operations $Operations -OrchestratorPath $OrchestratorPath -Workspaces $Workspaces -ReadKeyScript $ReadKeyScript -PreflightDecisionsByOperationKey $preflightMap
     } elseif (@($PendingStates).Count -gt 0) {
         Invoke-WorkspaceCommit -UIStates $PendingStates -OrchestratorPath $OrchestratorPath -SkipInterceptorSync
     }
@@ -2695,8 +3007,20 @@ function Start-DashboardAutoCommit {
     if (@($warningList).Count -gt 0) {
         throw ("Fatal: Auto-commit blocked due to unresolved warnings: {0}" -f ([string]::Join("; ", @($warningList))))
     }
+
+    $preflightDecisions = @{}
+    if (@($operations).Count -gt 0) {
+        $repoRootAc = Get-WorkspaceRepoRoot
+        $preflightIssuesAc = @(Get-DashboardCommitPreflightIssues -Operations $operations -Workspaces $Workspaces -RepoRoot $repoRootAc)
+        $preflightResultAc = Resolve-DashboardCommitPreflightDecisions -Issues $preflightIssuesAc -Workspaces $Workspaces -ReadKeyScript $null
+        if (-not $preflightResultAc.Continue) {
+            throw "Fatal: Auto-commit cancelled during preflight (non-interactive abort)."
+        }
+        $preflightDecisions = $preflightResultAc.ByOperationKey
+    }
+
     $pendingStates = Get-DashboardPendingCommitStates -WorkloadStates $WorkloadStates -PendingHardwareChanges $script:PendingHardwareChanges
-    Invoke-DashboardCommit -PendingStates $pendingStates -PendingHardwareChanges $script:PendingHardwareChanges -OrchestratorPath $OrchestratorPath -JsonPath $jsonPath -Workspaces $workspaces -SettingsRows $script:SettingsStates -Operations $operations
+    Invoke-DashboardCommit -PendingStates $pendingStates -PendingHardwareChanges $script:PendingHardwareChanges -OrchestratorPath $OrchestratorPath -JsonPath $jsonPath -Workspaces $workspaces -SettingsRows $script:SettingsStates -Operations $operations -PreflightDecisionsByOperationKey $preflightDecisions
 
     $messageStates = @(Convert-DashboardOperationsToMessageStates -Operations $operations)
     if ($messageStates.Count -eq 0) {

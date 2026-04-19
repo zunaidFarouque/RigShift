@@ -121,6 +121,26 @@ Describe "Interceptor workload resolution and flow" {
         $result.Name | Should -Be "StarDesk"
     }
 
+    It "resolves legacy string intercept for workload without services property" {
+        $ws = [pscustomobject]@{
+            App_Workloads = [pscustomobject]@{
+                Tools = [pscustomobject]@{
+                    LightTool = [pscustomobject]@{
+                        executables = @("'C:/Apps/FooApp.exe'")
+                        intercepts = @("FooApp.exe")
+                    }
+                }
+            }
+        }
+
+        { Resolve-InterceptedWorkload -Workspaces $ws -TargetExe "C:/Apps/FooApp.exe" } | Should -Not -Throw
+        $r = Resolve-InterceptedWorkload -Workspaces $ws -TargetExe "D:/Other/FooApp.exe"
+        $r.Name | Should -Be "LightTool"
+        @($r.RequiredServices).Count | Should -Be 0
+        @($r.RequiredExecutables).Count | Should -Be 1
+        $r.RequiredExecutables[0] | Should -Be "'C:/Apps/FooApp.exe'"
+    }
+
     It "launches target immediately when workload is already active" {
         Mock -CommandName Get-InterceptorWorkspaces -MockWith { $script:workspaces }
         Mock -CommandName Test-InterceptorRuleActive -MockWith { $true }

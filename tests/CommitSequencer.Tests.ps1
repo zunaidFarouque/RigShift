@@ -155,6 +155,48 @@ Describe "Dashboard Global Commit Sequencer" {
         @($ops | Where-Object { $_.WorkspaceName -eq "Office" -and $_.Phase -eq 7 }).Count | Should -Be 1
     }
 
+    It "omits Start ServicesOnly when workload JSON has no services" {
+        $workspaces = [pscustomobject]@{
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+            App_Workloads = [pscustomobject]@{
+                Tools = [pscustomobject]@{
+                    ExecOnly = [pscustomobject]@{
+                        executables = @("'C:/fake/app.exe'")
+                    }
+                }
+            }
+        }
+        $modeStates = @([pscustomobject]@{ Name = "Eco_Life"; CurrentState = "Active"; DesiredState = "Active"; ProfileType = "System_Mode" })
+        $workloadStates = @(
+            [pscustomobject]@{ Name = "ExecOnly"; CurrentState = "Inactive"; DesiredState = "Active"; ProfileType = "App_Workload"; Domain = "Tools" }
+        )
+        $ops = @(Build-DashboardCommitOperations -Workspaces $workspaces -ModeStates $modeStates -WorkloadStates $workloadStates -PendingHardwareChanges @{})
+        @($ops | Where-Object { $_.WorkspaceName -eq "ExecOnly" -and $_.Phase -eq 6 }).Count | Should -Be 0
+        @($ops | Where-Object { $_.WorkspaceName -eq "ExecOnly" -and $_.Phase -eq 7 }).Count | Should -Be 1
+    }
+
+    It "omits Start ExecutablesOnly when workload JSON has no executables" {
+        $workspaces = [pscustomobject]@{
+            Hardware_Definitions = [pscustomobject]@{}
+            System_Modes = [pscustomobject]@{}
+            App_Workloads = [pscustomobject]@{
+                Tools = [pscustomobject]@{
+                    SvcOnly = [pscustomobject]@{
+                        services = @("SomeSvc")
+                    }
+                }
+            }
+        }
+        $modeStates = @([pscustomobject]@{ Name = "Eco_Life"; CurrentState = "Active"; DesiredState = "Active"; ProfileType = "System_Mode" })
+        $workloadStates = @(
+            [pscustomobject]@{ Name = "SvcOnly"; CurrentState = "Inactive"; DesiredState = "Active"; ProfileType = "App_Workload"; Domain = "Tools" }
+        )
+        $ops = @(Build-DashboardCommitOperations -Workspaces $workspaces -ModeStates $modeStates -WorkloadStates $workloadStates -PendingHardwareChanges @{})
+        @($ops | Where-Object { $_.WorkspaceName -eq "SvcOnly" -and $_.Phase -eq 6 }).Count | Should -Be 1
+        @($ops | Where-Object { $_.WorkspaceName -eq "SvcOnly" -and $_.Phase -eq 7 }).Count | Should -Be 0
+    }
+
     It "mode_change_without_queue_applies_powerplan_only" {
         $workspaces = [pscustomobject]@{
             Hardware_Definitions = [pscustomobject]@{

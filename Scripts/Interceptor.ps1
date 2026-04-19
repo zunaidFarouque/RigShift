@@ -110,8 +110,8 @@ function Resolve-InterceptedWorkload {
 
             if (-not $matched) { continue }
 
-            $defaultServices = @($workload.services)
-            $defaultExecutables = @($workload.executables)
+            $defaultServices = @(Get-JsonObjectOptionalStringArray -InputObject $workload -PropertyName "services")
+            $defaultExecutables = @(Get-JsonObjectOptionalStringArray -InputObject $workload -PropertyName "executables")
 
             # Resolver semantics:
             # - legacy string intercept items: default to whole workload services/executables.
@@ -673,8 +673,8 @@ function Invoke-Interceptor {
         return
     }
 
-    $fullServices = @($resolved.Workload.services)
-    $fullExecutables = @($resolved.Workload.executables)
+    $fullServices = @(Get-JsonObjectOptionalStringArray -InputObject $resolved.Workload -PropertyName "services")
+    $fullExecutables = @(Get-JsonObjectOptionalStringArray -InputObject $resolved.Workload -PropertyName "executables")
 
     $promptResult = Show-InterceptorPrompt `
         -TargetExe $TargetExe `

@@ -76,6 +76,8 @@ if (-not (Test-Path -Path $dbPath -PathType Leaf)) {
 
 $configDir = [System.IO.Path]::GetDirectoryName($dbPath)
 $script:OrchestratorRepoRoot = Resolve-OrchestratorRepoRoot -ConfigDirectory $configDir
+. (Join-Path -Path $PSScriptRoot -ChildPath "ExecutionTokenPath.ps1")
+. (Join-Path -Path $PSScriptRoot -ChildPath "JsonWorkloadHelpers.ps1")
 try {
     $workspaces = Get-Content -Path $dbPath -Raw -Encoding utf8 | ConvertFrom-Json
 } catch {
@@ -240,38 +242,6 @@ function Wait-ProcessWithTimeout {
     }
 }
 
-function Resolve-QuotedRelativeExecutionToken {
-    param([Parameter(Mandatory)][string]$ExecutionToken)
-    $root = $script:OrchestratorRepoRoot
-    if ([string]::IsNullOrWhiteSpace($root)) {
-        $root = $PSScriptRoot
-    }
-    $sep = [System.IO.Path]::DirectorySeparatorChar
-    [regex]::Replace($ExecutionToken, "^'\.[\/\\](.*?)'", {
-        param($match)
-        $relativeRemainder = $match.Groups[1].Value -replace '/', $sep
-        "'" + (Join-Path $root $relativeRemainder) + "'"
-    })
-}
-
-function Resolve-RepoRelativeFilePath {
-    param([Parameter(Mandatory)][string]$Path)
-    $root = $script:OrchestratorRepoRoot
-    if ([string]::IsNullOrWhiteSpace($root)) {
-        $root = $PSScriptRoot
-    }
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        return $Path
-    }
-    $t = $Path.Trim()
-    if ($t.Length -ge 2 -and $t[0] -eq [char]'.' -and ($t[1] -eq [char]'/' -or $t[1] -eq '\')) {
-        $rest = $t.Substring(2).TrimStart([char[]]@('/', '\'))
-        $rest = $rest -replace '/', [System.IO.Path]::DirectorySeparatorChar
-        return (Join-Path $root $rest)
-    }
-    return $Path
-}
-
 function Start-ShortcutOrUrlShellExecute {
     param(
         [Parameter(Mandatory)][string]$ItemPath,
@@ -307,34 +277,18 @@ function Invoke-ExecutionToken {
         [switch]$Wait
     )
 
-    $token = Resolve-QuotedRelativeExecutionToken -ExecutionToken $ExecutionToken
-    $filePath = $token
-    $argumentList = ""
-    $tokenWasQuotedPath = $false
-    if ($token -match "^'(.*?)'\s*(.*)$") {
-        $filePath = $matches[1]
-        $argumentList = $matches[2]
-        $tokenWasQuotedPath = $true
-    } elseif ($token -match "^(\S+)\s+(.+)$") {
-        # Support command tokens like: gsudo taskkill /F /IM GCC.exe
-        $filePath = $matches[1]
-        $argumentList = $matches[2]
+    $repoRoot = $script:OrchestratorRepoRoot
+    if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+        $repoRoot = $PSScriptRoot
     }
 
-    $shouldResolveAsPath = $tokenWasQuotedPath -or
-        $filePath.StartsWith(".\") -or
-        $filePath.StartsWith("./") -or
-        $filePath -match '^[a-zA-Z]:[\\/]' -or
-        $filePath.Contains("\") -or
-        $filePath.Contains("/")
-
-    if ($shouldResolveAsPath) {
-        $filePath = Resolve-RepoRelativeFilePath -Path $filePath
-        $filePath = [System.IO.Path]::GetFullPath($filePath)
-        if (-not (Test-Path -LiteralPath $filePath)) {
-            throw "Executable path does not exist: '$filePath'"
-        }
+    $pathInfo = Get-ExecutionTokenFilesystemCheckInfo -RepoRoot $repoRoot -ExecutionToken $ExecutionToken
+    if ($pathInfo.RequiresPathCheck -and -not $pathInfo.PathExists) {
+        throw "Executable path does not exist: '$($pathInfo.ResolvedFullPath)'"
     }
+
+    $filePath = $pathInfo.FilePathForLaunch
+    $argumentList = $pathInfo.ArgumentList
 
     $ext = [System.IO.Path]::GetExtension($filePath).ToLowerInvariant()
 
@@ -721,13 +675,13 @@ if ($resolvedProfileType -eq "App_Workload") {
 
     if ($Action -eq "Start") {
         if ($runServices) {
-            foreach ($serviceName in @($resolvedProfileData.services)) {
+            foreach ($serviceName in @(Get-JsonObjectOptionalStringArray -InputObject $resolvedProfileData -PropertyName "services")) {
                 if ([string]::IsNullOrWhiteSpace([string]$serviceName)) { continue }
                 Invoke-ElevatedServiceLifecycle -ServiceName ([string]$serviceName) -Operation Start
             }
         }
         if ($runExecutables) {
-            foreach ($executionToken in @($resolvedProfileData.executables)) {
+            foreach ($executionToken in @(Get-JsonObjectOptionalStringArray -InputObject $resolvedProfileData -PropertyName "executables")) {
                 if ([string]::IsNullOrWhiteSpace([string]$executionToken)) { continue }
                 Invoke-ExecutionToken -ExecutionToken ([string]$executionToken)
             }
@@ -738,14 +692,18 @@ if ($resolvedProfileType -eq "App_Workload") {
         }
     } else {
         if ($runExecutables) {
-            $executables = @($resolvedProfileData.executables)
+            $executables = @(Get-JsonObjectOptionalStringArray -InputObject $resolvedProfileData -PropertyName "executables")
+            $repoRootStop = $script:OrchestratorRepoRoot
+            if ([string]::IsNullOrWhiteSpace($repoRootStop)) {
+                $repoRootStop = $PSScriptRoot
+            }
             for ($i = $executables.Count - 1; $i -ge 0; $i--) {
-                $executionToken = Resolve-QuotedRelativeExecutionToken -ExecutionToken ([string]$executables[$i])
+                $executionToken = Resolve-ExecutionTokenQuotedRelative -RepoRoot $repoRootStop -ExecutionToken ([string]$executables[$i])
                 $filePath = $executionToken
                 if ($executionToken -match "^'(.*?)'\s*(.*)$") {
                     $filePath = $matches[1]
                 }
-                $filePath = Resolve-RepoRelativeFilePath -Path $filePath
+                $filePath = Resolve-ExecutionTokenRepoRelativeFilePath -RepoRoot $repoRootStop -Path $filePath
                 $exeName = Split-Path -Path $filePath -Leaf
                 if (-not [string]::IsNullOrWhiteSpace($exeName)) {
                     gsudo taskkill /F /IM $exeName /T 2>&1 | Out-Null
@@ -753,7 +711,7 @@ if ($resolvedProfileType -eq "App_Workload") {
             }
         }
         if ($runServices) {
-            foreach ($serviceName in @($resolvedProfileData.services)) {
+            foreach ($serviceName in @(Get-JsonObjectOptionalStringArray -InputObject $resolvedProfileData -PropertyName "services")) {
                 if ([string]::IsNullOrWhiteSpace([string]$serviceName)) { continue }
                 Invoke-ElevatedServiceLifecycle -ServiceName ([string]$serviceName) -Operation Stop
             }

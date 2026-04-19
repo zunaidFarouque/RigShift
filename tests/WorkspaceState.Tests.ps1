@@ -164,6 +164,36 @@ Describe "Workspace State Engine (Declarative Matrix)" {
         @($state.AppWorkloads.Empty_Workload.RuntimeDetails.Executables).Count | Should -Be 0
     }
 
+    It "allows App_Workload without services tags or aliases when executables are defined" {
+        $script:config.App_Workloads = [pscustomobject]@{
+            Tools = [pscustomobject]@{
+                ExecOnly = [pscustomobject]@{
+                    executables = @("'C:/fake/MyApp.exe'")
+                    priority = 25
+                    favorite = $false
+                    hidden = $false
+                }
+            }
+        }
+        '{"Active_System_Mode":"Eco_Life"}' | Set-Content -Path $script:statePath -Encoding UTF8
+        Mock -CommandName Get-Service -MockWith { [pscustomobject]@{ Status = "Stopped" } }
+        Mock -CommandName Get-Process -MockWith { [pscustomobject]@{ Name = "MyApp" } }
+        Mock -CommandName Get-ItemPropertyValue -MockWith { $null }
+        Mock -CommandName powercfg -MockWith { "Power Scheme GUID: 9999  (Power saver)" }
+        Mock -CommandName Get-CimInstance -MockWith { $null }
+
+        $state = Get-WorkspaceState -Workspace $script:config
+
+        $state.AppWorkloads.ExecOnly.Status | Should -Be "Active"
+        $state.AppWorkloads.ExecOnly.TotalChecks | Should -Be 1
+        $state.AppWorkloads.ExecOnly.MatchedChecks | Should -Be 1
+        @($state.AppWorkloads.ExecOnly.RuntimeDetails.Services).Count | Should -Be 0
+        @($state.AppWorkloads.ExecOnly.RuntimeDetails.Executables).Count | Should -Be 1
+        $state.AppWorkloads.ExecOnly.RuntimeDetails.Executables[0].IsRunning | Should -BeTrue
+        @($state.AppWorkloads.ExecOnly.Tags).Count | Should -Be 0
+        @($state.AppWorkloads.ExecOnly.Aliases).Count | Should -Be 0
+    }
+
     It "uses persisted Active_System_Mode for strict Active/Inactive status" {
         '{"Active_System_Mode":"Live_Stage_Life"}' | Set-Content -Path $script:statePath -Encoding UTF8
         Mock -CommandName Get-Service -MockWith {
