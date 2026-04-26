@@ -175,8 +175,7 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
 
             { & $script:scriptPath -WorkspaceName "VpnWorkload" -Action "Stop" -SkipInterceptorSync | Out-Null } | Should -Not -Throw
 
-            (@($global:gsudoCalls | Where-Object { $_ -match 'taskkill /F /IM ' })).Count | Should -Be 1
-            (@($global:gsudoCalls | Where-Object { $_ -match 'powershell -NoProfile -EncodedCommand' })).Count | Should -Be 1
+            (@($global:gsudoCalls | Where-Object { $_ -match 'powershell -NoProfile -EncodedCommand' })).Count | Should -Be 2
             Assert-MockCalled -CommandName Start-Sleep -Times 0 -Exactly
             (@($printed | Where-Object { $_ -eq "Manual stop gate auto-continued after 0s." })).Count | Should -Be 1
         } finally {
@@ -231,6 +230,89 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
             (@($printed | Where-Object { $_ -eq "GENERIC gate message" })).Count | Should -Be 0
         } finally {
             Remove-Item -LiteralPath $tmpExe -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "throws when executable stop taskkill reports access denied" {
+        $tmpExe = Join-Path ([System.IO.Path]::GetTempPath()) ("orch-stop-fail-{0}.exe" -f [Guid]::NewGuid().ToString("n"))
+        try {
+            New-Item -ItemType File -Path $tmpExe -Force | Out-Null
+            $exeForJson = $tmpExe.Replace("\", "/")
+            @"
+{
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {
+    "Tools": {
+      "StrictStopWorkload": {
+        "services": [],
+        "executables": ["'$exeForJson'"]
+      }
+    }
+  }
+}
+"@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+            Mock -CommandName gsudo -MockWith {
+                $joined = $args -join " "
+                if ($joined -match "-EncodedCommand\s+(\S+)") {
+                    $encoded = $matches[1]
+                    $decoded = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+                    if ($decoded -match "taskkill\.exe") {
+                        $global:LASTEXITCODE = 5
+                        return "ERROR: Access is denied."
+                    }
+                }
+                "ok"
+            }
+
+            { & $script:scriptPath -WorkspaceName "StrictStopWorkload" -Action "Stop" -ExecutionScope "ExecutablesOnly" -SkipInterceptorSync | Out-Null } | Should -Throw "*Failed to stop executable*"
+        } finally {
+            Remove-Item -LiteralPath $tmpExe -Force -ErrorAction SilentlyContinue
+            $global:LASTEXITCODE = 0
+        }
+    }
+
+    It "uses encoded elevated taskkill for executable names containing spaces" {
+        $tmpExe = Join-Path ([System.IO.Path]::GetTempPath()) ("Cloudflare WARP-{0}.exe" -f [Guid]::NewGuid().ToString("n"))
+        try {
+            New-Item -ItemType File -Path $tmpExe -Force | Out-Null
+            $exeForJson = $tmpExe.Replace("\", "/")
+            @"
+{
+  "Hardware_Definitions": {},
+  "System_Modes": {},
+  "App_Workloads": {
+    "Tools": {
+      "SpaceNameStopWorkload": {
+        "services": [],
+        "executables": ["'$exeForJson'"]
+      }
+    }
+  }
+}
+"@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+            $global:gsudoCalls = @()
+            Mock -CommandName gsudo -MockWith {
+                $global:gsudoCalls += ,($args -join " ")
+                $global:LASTEXITCODE = 0
+                "ok"
+            }
+
+            { & $script:scriptPath -WorkspaceName "SpaceNameStopWorkload" -Action "Stop" -ExecutionScope "ExecutablesOnly" -SkipInterceptorSync | Out-Null } | Should -Not -Throw
+
+            $encodedCalls = @($global:gsudoCalls | Where-Object { $_ -match 'powershell -NoProfile -EncodedCommand' })
+            $encodedCalls.Count | Should -Be 1
+            $encodedValue = ([regex]::Match($encodedCalls[0], '-EncodedCommand\s+(\S+)')).Groups[1].Value
+            $decoded = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedValue))
+            $decoded | Should -Match "\$im = 'Cloudflare WARP-.*\.exe'"
+            $decoded | Should -Match "taskkill\.exe"
+            $decoded | Should -Match "/IM"
+        } finally {
+            Remove-Item -LiteralPath $tmpExe -Force -ErrorAction SilentlyContinue
+            Remove-Variable -Name gsudoCalls -Scope Global -ErrorAction SilentlyContinue
+            $global:LASTEXITCODE = 0
         }
     }
 

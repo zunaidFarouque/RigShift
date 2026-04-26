@@ -921,7 +921,62 @@ if ($resolvedProfileType -eq "App_Workload") {
                 $filePath = Resolve-ExecutionTokenRepoRelativeFilePath -RepoRoot $repoRootStop -Path $filePath
                 $exeName = Split-Path -Path $filePath -Leaf
                 if (-not [string]::IsNullOrWhiteSpace($exeName)) {
-                    gsudo taskkill /F /IM $exeName /T 2>&1 | Out-Null
+                    $LASTEXITCODE = 0
+                    $exeNameLiteral = $exeName.Replace("'", "''")
+                    $killBody = @"
+`$ErrorActionPreference='Continue'
+`$im = '$exeNameLiteral'
+`$taskkill = Join-Path `$env:SystemRoot 'System32\taskkill.exe'
+`$p = Start-Process -FilePath `$taskkill -ArgumentList @('/F','/IM',`$im,'/T') -Wait -PassThru -WindowStyle Hidden
+if (`$null -ne `$p -and `$p.ExitCode -ne 0) { exit `$p.ExitCode }
+"@
+                    $killEncoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($killBody))
+                    $killOutput = @(& gsudo powershell -NoProfile -EncodedCommand $killEncoded 2>&1)
+                    $outputText = if ($killOutput.Count -gt 0) {
+                        ($killOutput | ForEach-Object { "$_" }) -join "; "
+                    } else {
+                        "(no output)"
+                    }
+                    $alivePidsAfterPrimary = @()
+                    try {
+                        $alivePidsAfterPrimary = @(
+                            Get-CimInstance -ClassName Win32_Process -Filter ("Name = '{0}'" -f $exeName.Replace("'", "''")) -ErrorAction SilentlyContinue
+                        ) | ForEach-Object { [int]$_.ProcessId }
+                    } catch {
+                        $alivePidsAfterPrimary = @()
+                    }
+                    $looksLikeFailure = $outputText -match "(?i)\berror\b|access is denied"
+                    if ($LASTEXITCODE -ne 0 -or $looksLikeFailure) {
+                        throw "Failed to stop executable '$exeName': $outputText"
+                    }
+                    if (@($alivePidsAfterPrimary).Count -gt 0) {
+                        $pidCsv = (@($alivePidsAfterPrimary) | ForEach-Object { [string]$_ }) -join ","
+                        $fallbackBody = @"
+`$ErrorActionPreference='Continue'
+`$pidList = @($pidCsv)
+foreach (`$targetPid in `$pidList) {
+  Stop-Process -Id `$targetPid -Force -ErrorAction SilentlyContinue
+}
+"@
+                        $fallbackEncoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($fallbackBody))
+                        $fallbackOutput = @(& gsudo powershell -NoProfile -EncodedCommand $fallbackEncoded 2>&1)
+                        $fallbackOutputText = if ($fallbackOutput.Count -gt 0) {
+                            ($fallbackOutput | ForEach-Object { "$_" }) -join "; "
+                        } else {
+                            "(no output)"
+                        }
+                        $alivePidsAfterFallback = @()
+                        try {
+                            $alivePidsAfterFallback = @(
+                                Get-CimInstance -ClassName Win32_Process -Filter ("Name = '{0}'" -f $exeName.Replace("'", "''")) -ErrorAction SilentlyContinue
+                            ) | ForEach-Object { [int]$_.ProcessId }
+                        } catch {
+                            $alivePidsAfterFallback = @()
+                        }
+                        if (@($alivePidsAfterFallback).Count -gt 0) {
+                            throw "Failed to stop executable '$exeName': process still running after fallback (pids=$((@($alivePidsAfterFallback) -join ',')))."
+                        }
+                    }
                 }
             }
         }
