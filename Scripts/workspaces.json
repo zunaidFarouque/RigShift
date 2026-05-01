@@ -90,6 +90,13 @@
         "*NVIDIA GeForce*"
       ]
     },
+    "RUN: Flush NVIDIA GPU": {
+      "description": "One-shot: restart NVIDIA display stack (disable services/PnP, pause, re-enable).",
+      "type": "stateless",
+      "action_override_on": [
+        "'./CustomScripts/Flush-NvidiaGpu.ps1'"
+      ]
+    },
     "Display_High_Refresh_Rate": {
       "description": "High-refresh display mode state (above 60 Hz detected as ON).",
       "type": "stateless",
@@ -139,6 +146,7 @@
         "Battery_ACPI": "ON",
         "Other_Peripherals": "ON",
         "NVIDIA_RTX_4050_Laptop_GPU": "ON",
+        "RUN: Flush NVIDIA GPU": "ANY",
         "Display_High_Refresh_Rate": "ON",
         "Gigabyte_Control_Center": "ON",
         "Gigabyte_Fan_Battery_Control": "OFF"
@@ -160,6 +168,7 @@
         "Battery_ACPI": "OFF",
         "Other_Peripherals": "OFF",
         "NVIDIA_RTX_4050_Laptop_GPU": "ON",
+        "RUN: Flush NVIDIA GPU": "ANY",
         "Display_High_Refresh_Rate": "OFF",
         "Gigabyte_Control_Center": "OFF",
         "Gigabyte_Fan_Battery_Control": "ON"
@@ -180,6 +189,7 @@
         "Battery_ACPI": "ANY",
         "Other_Peripherals": "OFF",
         "NVIDIA_RTX_4050_Laptop_GPU": "OFF",
+        "RUN: Flush NVIDIA GPU": "ANY",
         "Display_High_Refresh_Rate": "ANY",
         "Gigabyte_Control_Center": "OFF",
         "Gigabyte_Fan_Battery_Control": "ON"
