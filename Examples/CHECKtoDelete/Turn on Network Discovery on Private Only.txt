@@ -1,0 +1,10 @@
+Enable the floodgate (Shouting in every network):
+```
+Get-NetFirewallRule -Group '*-32752*' | Where-Object 'Profile' -Match 'Private' | Set-NetFirewallRule -Enabled 'True'
+```
+
+Disable the floodgate (no shouting in every network):
+```
+Get-NetFirewallRule -Group '*-32752*' | Where-Object 'Profile' -Match 'Private' | Set-NetFirewallRule -Enabled 'False'
+```
+
