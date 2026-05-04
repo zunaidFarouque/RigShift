@@ -1592,3 +1592,58 @@ Describe "Dashboard Queued RESTART Mode" {
 
 
 
+
+Describe "Dashboard unified key routing maps" {
+    BeforeAll {
+        $basePath = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        $script:repoRoot = Split-Path -Path $basePath -Parent
+        $script:scriptsDir = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        . (Join-Path -Path $script:scriptsDir -ChildPath "Dashboard.ps1")
+    }
+
+    It "resolves keys by precedence modal > tab > global > no-op" {
+        $globalMap = @{ Enter = [pscustomobject]@{ Id = "GlobalCommit" } }
+        $tabMap = @{ Enter = [pscustomobject]@{ Id = "TabCommit" } }
+        $modalMap = @{ Enter = [pscustomobject]@{ Id = "ModalConfirm" } }
+        $resolver = New-DashboardKeyResolver -GlobalKeyMap $globalMap -TabKeyMaps @{ 1 = $tabMap } -ModalKeyMaps @{ CommitFailure = $modalMap }
+
+        (Resolve-DashboardKeyAction -Resolver $resolver -CurrentTab 1 -ActiveModal "CommitFailure" -Key "Enter").Id | Should -Be "ModalConfirm"
+        (Resolve-DashboardKeyAction -Resolver $resolver -CurrentTab 1 -ActiveModal "" -Key "Enter").Id | Should -Be "TabCommit"
+        (Resolve-DashboardKeyAction -Resolver $resolver -CurrentTab 2 -ActiveModal "" -Key "Enter").Id | Should -Be "GlobalCommit"
+        (Resolve-DashboardKeyAction -Resolver $resolver -CurrentTab 2 -ActiveModal "" -Key "F13").Id | Should -Be "NoOp"
+    }
+
+    It "keeps tab-specific Space behavior for tab1/tab2/tab3/tab4" {
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "" -Key "Spacebar" -HasMultipleModes $true) | Should -Be "Tab1SpaceToggleDesired"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 2 -ActiveModal "" -Key "Spacebar" -HasMultipleModes $true) | Should -Be "Tab2SpaceSetBlueprint"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 3 -ActiveModal "" -Key "Spacebar" -HasMultipleModes $true) | Should -Be "Tab3SpaceToggleQueue"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 4 -ActiveModal "" -Key "Spacebar" -HasMultipleModes $true) | Should -Be "Tab4SpaceEditSetting"
+    }
+
+    It "uses tab4 Enter action-row override while preserving global Enter commit" {
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 4 -ActiveModal "" -Key "Enter" -HasMultipleModes $true -Tab4RowType "action") | Should -Be "Tab4EnterActionRow"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 4 -ActiveModal "" -Key "Enter" -HasMultipleModes $true -Tab4RowType "setting") | Should -Be "GlobalEnterCommit"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "" -Key "Enter" -HasMultipleModes $true) | Should -Be "GlobalEnterCommit"
+    }
+
+    It "keeps global C Enter Esc and navigation keys active" {
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 3 -ActiveModal "" -Key "C" -HasMultipleModes $true) | Should -Be "GlobalToggleCommitMode"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 3 -ActiveModal "" -Key "Escape" -HasMultipleModes $true) | Should -Be "GlobalCancelExit"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 3 -ActiveModal "" -Key "UpArrow" -HasMultipleModes $true) | Should -Be "GlobalCursorUp"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 3 -ActiveModal "" -Key "DownArrow" -HasMultipleModes $true) | Should -Be "GlobalCursorDown"
+    }
+
+    It "guards tab 2 switch key when HasMultipleModes is false" {
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "" -Key "D2" -HasMultipleModes $false) | Should -Be "NoOp"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "" -Key "NumPad2" -HasMultipleModes $false) | Should -Be "NoOp"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "" -Key "D2" -HasMultipleModes $true) | Should -Be "GlobalTab2"
+    }
+
+    It "keeps manual gate modal keys for Space Esc and return mode keys" {
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "ManualStopGate" -Key "Spacebar" -HasMultipleModes $true) | Should -Be "ModalManualGateAbort"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "ManualStopGate" -Key "Escape" -HasMultipleModes $true) | Should -Be "ModalManualGateAbort"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "ManualStopGate" -Key "Enter" -HasMultipleModes $true) | Should -Be "ModalManualGateContinue"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "PostCommitReturnMode" -Key "Escape" -HasMultipleModes $true) | Should -Be "ModalPostCommitExit"
+        (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "PostCommitReturnMode" -Key "A" -HasMultipleModes $true) | Should -Be "ModalPostCommitReturnToDashboard"
+    }
+}

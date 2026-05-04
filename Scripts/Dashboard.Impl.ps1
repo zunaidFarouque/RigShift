@@ -442,6 +442,208 @@ function Get-DashboardCommitModeText {
     return ("CommitMode: {0}" -f $normalized)
 }
 
+function New-DashboardKeyResolver {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$GlobalKeyMap,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$TabKeyMaps,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$ModalKeyMaps
+    )
+
+    return [pscustomobject]@{
+        Global = $GlobalKeyMap
+        Tabs = $TabKeyMaps
+        Modals = $ModalKeyMaps
+    }
+}
+
+function Resolve-DashboardKeyAction {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Resolver,
+        [Parameter(Mandatory = $true)]
+        [int]$CurrentTab,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$ActiveModal,
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+        [Parameter(Mandatory = $false)]
+        [bool]$HasMultipleModes = $true,
+        [Parameter(Mandatory = $false)]
+        [string]$Tab4RowType = ""
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ActiveModal) -and $Resolver.Modals.ContainsKey($ActiveModal)) {
+        $modalMap = $Resolver.Modals[$ActiveModal]
+        if ($modalMap.ContainsKey($Key)) {
+            return $modalMap[$Key]
+        }
+        if ($modalMap.ContainsKey("Any")) {
+            return $modalMap["Any"]
+        }
+    }
+
+    if ($Resolver.Tabs.ContainsKey($CurrentTab)) {
+        $tabMap = $Resolver.Tabs[$CurrentTab]
+        if ($tabMap.ContainsKey($Key)) {
+            $tabAction = $tabMap[$Key]
+            if ([string]$tabAction.Id -eq "GlobalTab2" -and -not $HasMultipleModes) {
+                return [pscustomobject]@{ Id = "NoOp" }
+            }
+            if ([string]$tabAction.Id -eq "Tab4EnterActionRow" -and $CurrentTab -eq 4 -and [string]$Tab4RowType -ne "action") {
+                # Fall through to global Enter commit when selected row is not an action.
+            } else {
+                return $tabAction
+            }
+        }
+    }
+
+    if ($Resolver.Global.ContainsKey($Key)) {
+        $globalAction = $Resolver.Global[$Key]
+        if ([string]$globalAction.Id -eq "GlobalTab2" -and -not $HasMultipleModes) {
+            return [pscustomobject]@{ Id = "NoOp" }
+        }
+        return $globalAction
+    }
+
+    return [pscustomobject]@{ Id = "NoOp" }
+}
+
+function Get-DashboardDefaultKeyResolver {
+    [CmdletBinding()]
+    param()
+
+    $globalMap = @{
+        D1 = [pscustomobject]@{ Id = "GlobalTab1" }
+        NumPad1 = [pscustomobject]@{ Id = "GlobalTab1" }
+        D2 = [pscustomobject]@{ Id = "GlobalTab2" }
+        NumPad2 = [pscustomobject]@{ Id = "GlobalTab2" }
+        D3 = [pscustomobject]@{ Id = "GlobalTab3" }
+        NumPad3 = [pscustomobject]@{ Id = "GlobalTab3" }
+        D4 = [pscustomobject]@{ Id = "GlobalTab4" }
+        NumPad4 = [pscustomobject]@{ Id = "GlobalTab4" }
+        UpArrow = [pscustomobject]@{ Id = "GlobalCursorUp" }
+        DownArrow = [pscustomobject]@{ Id = "GlobalCursorDown" }
+        C = [pscustomobject]@{ Id = "GlobalToggleCommitMode" }
+        Escape = [pscustomobject]@{ Id = "GlobalCancelExit" }
+        Enter = [pscustomobject]@{ Id = "GlobalEnterCommit" }
+    }
+
+    $tabMaps = @{
+        1 = @{
+            Spacebar = [pscustomobject]@{ Id = "Tab1SpaceToggleDesired" }
+            Oem2 = [pscustomobject]@{ Id = "Tab1SearchFilter" }
+            G = [pscustomobject]@{ Id = "Tab1CycleGroupFilter" }
+            F = [pscustomobject]@{ Id = "Tab1ToggleFavoritesFilter" }
+            M = [pscustomobject]@{ Id = "Tab1ToggleMixedFilter" }
+            R = [pscustomobject]@{ Id = "Tab1QueueRestart" }
+            Oem3 = [pscustomobject]@{ Id = "Tab1CycleDetailMode" }
+        }
+        2 = @{
+            Spacebar = [pscustomobject]@{ Id = "Tab2SpaceSetBlueprint" }
+            A = [pscustomobject]@{ Id = "Tab2QueueIdealStates" }
+        }
+        3 = @{
+            Spacebar = [pscustomobject]@{ Id = "Tab3SpaceToggleQueue" }
+            Backspace = [pscustomobject]@{ Id = "Tab3ClearQueue" }
+            R = [pscustomobject]@{ Id = "Tab3QueueRestart" }
+        }
+        4 = @{
+            Spacebar = [pscustomobject]@{ Id = "Tab4SpaceEditSetting" }
+            LeftArrow = [pscustomobject]@{ Id = "Tab4DecrementNumeric" }
+            RightArrow = [pscustomobject]@{ Id = "Tab4EditOrIncrement" }
+            Add = [pscustomobject]@{ Id = "Tab4IncrementNumeric" }
+            Subtract = [pscustomobject]@{ Id = "Tab4DecrementNumeric" }
+            Enter = [pscustomobject]@{ Id = "Tab4EnterActionRow" }
+        }
+    }
+
+    $modalMaps = @{
+        ManualStopGate = @{
+            Spacebar = [pscustomobject]@{ Id = "ModalManualGateAbort" }
+            Escape = [pscustomobject]@{ Id = "ModalManualGateAbort" }
+            Enter = [pscustomobject]@{ Id = "ModalManualGateContinue" }
+        }
+        CommitFailure = @{
+            Escape = [pscustomobject]@{ Id = "ModalFailureAbort" }
+            D1 = [pscustomobject]@{ Id = "ModalFailureOption1" }
+            D2 = [pscustomobject]@{ Id = "ModalFailureOption2" }
+            D3 = [pscustomobject]@{ Id = "ModalFailureOption3" }
+            D4 = [pscustomobject]@{ Id = "ModalFailureOption4" }
+            D5 = [pscustomobject]@{ Id = "ModalFailureOption5" }
+            D6 = [pscustomobject]@{ Id = "ModalFailureOption6" }
+            D7 = [pscustomobject]@{ Id = "ModalFailureOption7" }
+            D8 = [pscustomobject]@{ Id = "ModalFailureOption8" }
+            D9 = [pscustomobject]@{ Id = "ModalFailureOption9" }
+            NumPad1 = [pscustomobject]@{ Id = "ModalFailureOption1" }
+            NumPad2 = [pscustomobject]@{ Id = "ModalFailureOption2" }
+            NumPad3 = [pscustomobject]@{ Id = "ModalFailureOption3" }
+            NumPad4 = [pscustomobject]@{ Id = "ModalFailureOption4" }
+            NumPad5 = [pscustomobject]@{ Id = "ModalFailureOption5" }
+            NumPad6 = [pscustomobject]@{ Id = "ModalFailureOption6" }
+            NumPad7 = [pscustomobject]@{ Id = "ModalFailureOption7" }
+            NumPad8 = [pscustomobject]@{ Id = "ModalFailureOption8" }
+            NumPad9 = [pscustomobject]@{ Id = "ModalFailureOption9" }
+        }
+        PreflightIssue = @{
+            Escape = [pscustomobject]@{ Id = "ModalPreflightAbort" }
+            D1 = [pscustomobject]@{ Id = "ModalPreflightOption1" }
+            D2 = [pscustomobject]@{ Id = "ModalPreflightOption2" }
+            D3 = [pscustomobject]@{ Id = "ModalPreflightOption3" }
+            D4 = [pscustomobject]@{ Id = "ModalPreflightOption4" }
+            D5 = [pscustomobject]@{ Id = "ModalPreflightOption5" }
+            D6 = [pscustomobject]@{ Id = "ModalPreflightOption6" }
+            D7 = [pscustomobject]@{ Id = "ModalPreflightOption7" }
+            D8 = [pscustomobject]@{ Id = "ModalPreflightOption8" }
+            D9 = [pscustomobject]@{ Id = "ModalPreflightOption9" }
+            NumPad1 = [pscustomobject]@{ Id = "ModalPreflightOption1" }
+            NumPad2 = [pscustomobject]@{ Id = "ModalPreflightOption2" }
+            NumPad3 = [pscustomobject]@{ Id = "ModalPreflightOption3" }
+            NumPad4 = [pscustomobject]@{ Id = "ModalPreflightOption4" }
+            NumPad5 = [pscustomobject]@{ Id = "ModalPreflightOption5" }
+            NumPad6 = [pscustomobject]@{ Id = "ModalPreflightOption6" }
+            NumPad7 = [pscustomobject]@{ Id = "ModalPreflightOption7" }
+            NumPad8 = [pscustomobject]@{ Id = "ModalPreflightOption8" }
+            NumPad9 = [pscustomobject]@{ Id = "ModalPreflightOption9" }
+        }
+        PostCommitReturnMode = @{
+            Escape = [pscustomobject]@{ Id = "ModalPostCommitExit" }
+            Any = [pscustomobject]@{ Id = "ModalPostCommitReturnToDashboard" }
+        }
+    }
+
+    return New-DashboardKeyResolver -GlobalKeyMap $globalMap -TabKeyMaps $tabMaps -ModalKeyMaps $modalMaps
+}
+
+function Resolve-DashboardDefaultKeyActionId {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$CurrentTab,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$ActiveModal,
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+        [Parameter(Mandatory = $false)]
+        [bool]$HasMultipleModes = $true,
+        [Parameter(Mandatory = $false)]
+        [string]$Tab4RowType = ""
+    )
+
+    $resolver = Get-DashboardDefaultKeyResolver
+    $action = Resolve-DashboardKeyAction -Resolver $resolver -CurrentTab $CurrentTab -ActiveModal $ActiveModal -Key $Key -HasMultipleModes:$HasMultipleModes -Tab4RowType $Tab4RowType
+    if ($null -eq $action -or [string]::IsNullOrWhiteSpace([string]$action.Id)) {
+        return "NoOp"
+    }
+    return [string]$action.Id
+}
+
 function Resolve-DashboardPostCommitAction {
     [CmdletBinding()]
     param(
@@ -469,7 +671,9 @@ function Resolve-DashboardPostCommitAction {
     Write-Host ""
     Write-Host "Press any key to return to dashboard. Press Esc to exit." -ForegroundColor White
     $keyInfo = if ($null -ne $ReadKeyScript) { & $ReadKeyScript } else { [Console]::ReadKey($true) }
-    if ($null -ne $keyInfo -and $keyInfo.Key -eq [ConsoleKey]::Escape) {
+    $keyName = if ($null -ne $keyInfo) { [string]$keyInfo.Key } else { "" }
+    $modalAction = Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "PostCommitReturnMode" -Key $keyName
+    if ($modalAction -eq "ModalPostCommitExit") {
         return "Exit"
     }
     return "ReturnToDashboard"
@@ -1903,15 +2107,14 @@ function Select-DashboardFailureAction {
     while ($true) {
         $keyInfo = if ($null -ne $ReadKeyScript) { & $ReadKeyScript } else { [Console]::ReadKey($true) }
         if ($null -eq $keyInfo) { continue }
-        if ($keyInfo.Key -eq [ConsoleKey]::Escape) {
+        $keyName = [string]$keyInfo.Key
+        $modalAction = Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "CommitFailure" -Key $keyName
+        if ($modalAction -eq "ModalFailureAbort") {
             return "AbortCommit"
         }
-        $keyChar = [string]$keyInfo.KeyChar
-        if ($keyChar -match "^[1-9]$") {
-            $idx = [int]$keyChar - 1
-            if ($idx -ge 0 -and $idx -lt $Options.Count) {
-                return [string]$Options[$idx].Id
-            }
+        if ($modalAction -match "^ModalFailureOption([1-9])$") {
+            $idx = [int]$Matches[1] - 1
+            if ($idx -lt $Options.Count) { return [string]$Options[$idx].Id }
         }
     }
 }
@@ -2229,15 +2432,14 @@ function Select-DashboardPreflightIssueAction {
     while ($true) {
         $keyInfo = if ($null -ne $ReadKeyScript) { & $ReadKeyScript } else { [Console]::ReadKey($true) }
         if ($null -eq $keyInfo) { continue }
-        if ($keyInfo.Key -eq [ConsoleKey]::Escape) {
+        $keyName = [string]$keyInfo.Key
+        $modalAction = Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "PreflightIssue" -Key $keyName
+        if ($modalAction -eq "ModalPreflightAbort") {
             return "AbortCommit"
         }
-        $keyChar = [string]$keyInfo.KeyChar
-        if ($keyChar -match "^[1-9]$") {
-            $idx = [int]$keyChar - 1
-            if ($idx -ge 0 -and $idx -lt $Options.Count) {
-                return [string]$Options[$idx].Id
-            }
+        if ($modalAction -match "^ModalPreflightOption([1-9])$") {
+            $idx = [int]$Matches[1] - 1
+            if ($idx -lt $Options.Count) { return [string]$Options[$idx].Id }
         }
     }
 }
@@ -3783,36 +3985,36 @@ function Start-Dashboard {
 
         if ($keyAvailable) {
             try {
-                $key = [Console]::ReadKey($true).Key
+                $key = [Console]::ReadKey($true)
             } catch {
                 Write-Host "Input error: $($_.Exception.Message)" -ForegroundColor Red
                 break
             }
 
-            switch ($key) {
-                "D1" { $CurrentTab = 1; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
-                "NumPad1" { $CurrentTab = 1; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
-                "D2" {
-                    if ($script:HasMultipleModes) {
-                        $CurrentTab = 2; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true
-                    }
-                    continue
+            $keyName = [string]$key.Key
+            $tab4RowType = ""
+            if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
+                $candidate = $activeStates[$cursorIndex]
+                if (Test-DashboardTab4RowIsAction -Row $candidate) {
+                    $tab4RowType = "action"
+                } elseif (Test-DashboardTab4RowIsSection -Row $candidate) {
+                    $tab4RowType = "section"
+                } else {
+                    $tab4RowType = "setting"
                 }
-                "NumPad2" {
-                    if ($script:HasMultipleModes) {
-                        $CurrentTab = 2; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true
-                    }
-                    continue
-                }
-                "D3" { $CurrentTab = 3; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
-                "NumPad3" { $CurrentTab = 3; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
-                "D4" { $CurrentTab = 4; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
-                "NumPad4" { $CurrentTab = 4; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
-                "UpArrow" {
+            }
+            $keyActionId = Resolve-DashboardDefaultKeyActionId -CurrentTab $CurrentTab -ActiveModal "" -Key $keyName -HasMultipleModes:$script:HasMultipleModes -Tab4RowType $tab4RowType
+
+            switch ($keyActionId) {
+                "GlobalTab1" { $CurrentTab = 1; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "GlobalTab2" { $CurrentTab = 2; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "GlobalTab3" { $CurrentTab = 3; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "GlobalTab4" { $CurrentTab = 4; $cursorIndex = 0; $pendingActionConfirmId = ""; $needsRedraw = $true; continue }
+                "GlobalCursorUp" {
                     if (($CurrentTab -eq 1 -or $CurrentTab -eq 2 -or $CurrentTab -eq 3 -or $CurrentTab -eq 4) -and $cursorIndex -gt 0) { $cursorIndex-- }
                     $pendingActionConfirmId = ""
                 }
-                "DownArrow" {
+                "GlobalCursorDown" {
                     if ($CurrentTab -eq 1 -or $CurrentTab -eq 2 -or $CurrentTab -eq 3 -or $CurrentTab -eq 4) {
                         $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates
                         if ($CurrentTab -eq 3) { $active = @($script:ComplianceData) }
@@ -3820,43 +4022,42 @@ function Start-Dashboard {
                     }
                     $pendingActionConfirmId = ""
                 }
-                "Spacebar" {
-                    if ($CurrentTab -eq 1 -or $CurrentTab -eq 2) {
-                        if ($CurrentTab -eq 1) {
-                            $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates
-                            if (@($active).Count -gt 0) {
-                                $selected = $active[$cursorIndex]
-                                $selected.DesiredState = Update-DashboardDesiredStateOnSpace `
-                                    -CurrentState ([string]$selected.CurrentState) `
-                                    -DesiredState ([string]$selected.DesiredState)
-                            }
-                        } elseif ($CurrentTab -eq 2) {
-                            $active = @($script:ModeStates)
-                            if (@($active).Count -gt 0) {
-                                $selected = $active[$cursorIndex]
-                                Set-DashboardActiveBlueprint -ModeStates $script:ModeStates -SelectedModeName ([string]$selected.Name) -StateFilePath $stateFilePath
-                                $stateEngine = Get-WorkspaceState -Workspace $workspaces -PnpCache $globalPnpCache
-                                $script:ComplianceData = @($stateEngine.Compliance)
-                                Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
-                            }
-                        }
-                    } elseif ($CurrentTab -eq 3) {
-                        if (@($script:ComplianceData).Count -gt 0) {
-                            $selected = $script:ComplianceData[$cursorIndex]
-                            Toggle-DashboardQueueOverride -Component ([string]$selected.Component) -PendingHardwareChanges $script:PendingHardwareChanges
-                            Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
-                        }
-                    } elseif ($CurrentTab -eq 4) {
-                        if (@($activeStates).Count -gt 0) {
-                            $selected = $activeStates[$cursorIndex]
-                            if (Test-DashboardTab4RowIsSetting -Row $selected) {
-                                [void](Update-DashboardSettingsValueOnSpace -Row $selected)
-                            }
-                            $pendingActionConfirmId = ""
-                        }
+                "Tab1SpaceToggleDesired" {
+                    $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates
+                    if (@($active).Count -gt 0) {
+                        $selected = $active[$cursorIndex]
+                        $selected.DesiredState = Update-DashboardDesiredStateOnSpace `
+                            -CurrentState ([string]$selected.CurrentState) `
+                            -DesiredState ([string]$selected.DesiredState)
                     }
                 }
-                "LeftArrow" {
+                "Tab2SpaceSetBlueprint" {
+                    $active = @($script:ModeStates)
+                    if (@($active).Count -gt 0) {
+                        $selected = $active[$cursorIndex]
+                        Set-DashboardActiveBlueprint -ModeStates $script:ModeStates -SelectedModeName ([string]$selected.Name) -StateFilePath $stateFilePath
+                        $stateEngine = Get-WorkspaceState -Workspace $workspaces -PnpCache $globalPnpCache
+                        $script:ComplianceData = @($stateEngine.Compliance)
+                        Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
+                    }
+                }
+                "Tab3SpaceToggleQueue" {
+                    if (@($script:ComplianceData).Count -gt 0) {
+                        $selected = $script:ComplianceData[$cursorIndex]
+                        Toggle-DashboardQueueOverride -Component ([string]$selected.Component) -PendingHardwareChanges $script:PendingHardwareChanges
+                        Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
+                    }
+                }
+                "Tab4SpaceEditSetting" {
+                    if (@($activeStates).Count -gt 0) {
+                        $selected = $activeStates[$cursorIndex]
+                        if (Test-DashboardTab4RowIsSetting -Row $selected) {
+                            [void](Update-DashboardSettingsValueOnSpace -Row $selected)
+                        }
+                        $pendingActionConfirmId = ""
+                    }
+                }
+                "Tab4DecrementNumeric" {
                     if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
                         $selected = $activeStates[$cursorIndex]
                         if (Test-DashboardTab4RowIsSetting -Row $selected) {
@@ -3865,7 +4066,7 @@ function Start-Dashboard {
                         $pendingActionConfirmId = ""
                     }
                 }
-                "RightArrow" {
+                "Tab4EditOrIncrement" {
                     if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
                         $selected = $activeStates[$cursorIndex]
                         if ((Test-DashboardTab4RowIsSetting -Row $selected) -and ($selected.Type -eq "string" -or $selected.Type -eq "int")) {
@@ -3894,7 +4095,7 @@ function Start-Dashboard {
                         $pendingActionConfirmId = ""
                     }
                 }
-                "Add" {
+                "Tab4IncrementNumeric" {
                     if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
                         $selected = $activeStates[$cursorIndex]
                         if (Test-DashboardTab4RowIsSetting -Row $selected) {
@@ -3903,20 +4104,11 @@ function Start-Dashboard {
                         $pendingActionConfirmId = ""
                     }
                 }
-                "Subtract" {
-                    if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
-                        $selected = $activeStates[$cursorIndex]
-                        if (Test-DashboardTab4RowIsSetting -Row $selected) {
-                            [void](Update-DashboardSettingsNumericValue -Row $selected -Delta -1)
-                        }
-                        $pendingActionConfirmId = ""
-                    }
-                }
-                "Oem3" {
+                "Tab1CycleDetailMode" {
                     $detailUpdate = Update-WorkloadDetailModeForKey -CurrentTab $CurrentTab -CurrentMode $workloadDetailMode -Key "Oem3"
                     $workloadDetailMode = [string]$detailUpdate.Mode
                 }
-                "Oem2" {
+                "Tab1SearchFilter" {
                     if ($CurrentTab -eq 1) {
                         try {
                             Invoke-SafeClearHost
@@ -3934,58 +4126,59 @@ function Start-Dashboard {
                         }
                     }
                 }
-                "G" {
+                "Tab1CycleGroupFilter" {
                     if ($CurrentTab -eq 1) {
                         Update-WorkloadDomainFilter -WorkloadStates $script:WorkloadStates -FilterState $script:WorkloadFilterState
                         $cursorIndex = 0
                     }
                 }
-                "F" {
+                "Tab1ToggleFavoritesFilter" {
                     if ($CurrentTab -eq 1) {
                         $script:WorkloadFilterState.FavoritesOnly = -not [bool]$script:WorkloadFilterState.FavoritesOnly
                         $cursorIndex = 0
                     }
                 }
-                "M" {
+                "Tab1ToggleMixedFilter" {
                     if ($CurrentTab -eq 1) {
                         $script:WorkloadFilterState.MixedOnly = -not [bool]$script:WorkloadFilterState.MixedOnly
                         $cursorIndex = 0
                     }
                 }
-                "A" {
+                "Tab2QueueIdealStates" {
                     if ($CurrentTab -eq 2) {
                         Add-DashboardIdealHardwareToQueue -ComplianceData $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
                     }
                 }
-                "Backspace" {
+                "Tab3ClearQueue" {
                     if ($CurrentTab -eq 3 -and @($script:ComplianceData).Count -gt 0) {
                         $selected = $script:ComplianceData[$cursorIndex]
                         Clear-DashboardQueueOverride -Component ([string]$selected.Component) -PendingHardwareChanges $script:PendingHardwareChanges
                         Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
                     }
                 }
-                "R" {
-                    if ($CurrentTab -eq 1) {
-                        $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates
-                        if (@($active).Count -gt 0) {
-                            $selected = $active[$cursorIndex]
-                            Set-DashboardWorkloadDesiredRestart -WorkloadRow $selected
-                        }
-                    } elseif ($CurrentTab -eq 3 -and @($script:ComplianceData).Count -gt 0) {
+                "Tab1QueueRestart" {
+                    $active = Get-ActiveStateArray -CurrentTab $CurrentTab -WorkloadStates $script:WorkloadStates -ModeStates $script:ModeStates -SettingsStates $script:SettingsStates -ActionStates $script:ActionStates
+                    if (@($active).Count -gt 0) {
+                        $selected = $active[$cursorIndex]
+                        Set-DashboardWorkloadDesiredRestart -WorkloadRow $selected
+                    }
+                }
+                "Tab3QueueRestart" {
+                    if ($CurrentTab -eq 3 -and @($script:ComplianceData).Count -gt 0) {
                         $selected = $script:ComplianceData[$cursorIndex]
                         Set-DashboardQueueOverrideRestart -Component ([string]$selected.Component) -PendingHardwareChanges $script:PendingHardwareChanges
                         Normalize-DashboardComplianceRows -ComplianceRows $script:ComplianceData -PendingHardwareChanges $script:PendingHardwareChanges
                     }
                 }
-                "C" {
+                "GlobalToggleCommitMode" {
                     $commitMode = Toggle-DashboardCommitMode -CurrentMode $commitMode
                 }
-                "Escape" {
+                "GlobalCancelExit" {
                     Invoke-SafeClearHost
                     Write-Host "Cancelled."
                     exit
                 }
-                "Enter" {
+                "Tab4EnterActionRow" {
                     if ($CurrentTab -eq 4 -and @($activeStates).Count -gt 0) {
                         $selected = $activeStates[$cursorIndex]
                         if (Test-DashboardTab4RowIsAction -Row $selected) {
@@ -4036,10 +4229,13 @@ function Start-Dashboard {
                             }
                         }
                     }
+                }
+                "GlobalEnterCommit" {
                     $commitRequested = $true
                     $isRendering = $false
                     break
                 }
+                "NoOp" { }
             }
             $needsRedraw = $true
         } else {
