@@ -118,6 +118,11 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         }
     }
 
+    It "sets service lifecycle wait timeout to 18 seconds" {
+        $scriptText = Get-Content -Path $script:scriptPath -Raw -Encoding UTF8
+        $scriptText | Should -Match '\$script:ServiceLifecycleWaitTimeoutMs\s*=\s*18000\b'
+    }
+
     It "continues stop workflow when executable scoped manual gate timeout is reached" {
         $tmpExe = Join-Path ([System.IO.Path]::GetTempPath()) ("orch-stop-gate-{0}.exe" -f [Guid]::NewGuid().ToString("n"))
         try {
