@@ -101,9 +101,9 @@ if ($null -ne $configProperty) {
     }
 }
 
-$script:ExecutionWaitTimeoutMs = 15000
+$script:ExecutionWaitTimeoutMs = 8000
 # Stop/start can sit in StopPending/StartPending (e.g. Office ClickToRun).
-$script:ServiceLifecycleWaitTimeoutMs = 18000
+$script:ServiceLifecycleWaitTimeoutMs = 8000
 $script:IfeoRegistryRoot = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
 $script:OrchestratorInteractiveServiceWait = $InteractiveServiceWait.IsPresent
 $script:RigShiftServiceWaitSkippedMessage = "RigShift: Service wait skipped by user."

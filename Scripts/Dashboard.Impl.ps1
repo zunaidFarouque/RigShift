@@ -323,6 +323,210 @@ function Set-DashboardActiveBlueprint {
     $payload | ConvertTo-Json -Depth 3 | Set-Content -Path $StateFilePath -Encoding utf8
 }
 
+function Get-DashboardFooterTabHint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$HasMultipleModes
+    )
+
+    if ($HasMultipleModes) {
+        return "[1][2][3][4] Tab"
+    }
+    return "[1][3][4] Tab"
+}
+
+function Get-DashboardFooterLine1Tab1 {
+    [CmdletBinding()]
+    param(
+        [string]$WorkloadDetailMode = "None"
+    )
+
+    $domainText = "All"
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:WorkloadFilterState.Domain)) {
+        $domainText = [string]$script:WorkloadFilterState.Domain
+    }
+    $favoriteText = "Off"
+    if ($script:WorkloadFilterState.FavoritesOnly) {
+        $favoriteText = "On"
+    }
+    $mixedText = "Off"
+    if ($script:WorkloadFilterState.MixedOnly) {
+        $mixedText = "On"
+    }
+
+    return "[``]Details: {0} | [M]ixed={1} | [/]Filters: q='{2}' | [G]roup='{3}' | [F]avourites={4}" -f `
+        $WorkloadDetailMode, `
+        $mixedText, `
+        [string]$script:WorkloadFilterState.Query, `
+        $domainText, `
+        $favoriteText
+}
+
+function Get-DashboardFooterHintDefinitions {
+    [CmdletBinding()]
+    param()
+
+    return @(
+        [pscustomobject]@{
+            Id = "Tab1Line1Filter"
+            Scope = "Footer"
+            Tab = 1
+            Context = "Workloads"
+            HintLine = 1
+            Order = 10
+            LabelScript = { param($c) Get-DashboardFooterLine1Tab1 -WorkloadDetailMode ([string]$c.WorkloadDetailMode) }
+            VisibleScript = { param($c) $true }
+        },
+        [pscustomobject]@{
+            Id = "Tab1Line2Controls"
+            Scope = "Footer"
+            Tab = 1
+            Context = "Workloads"
+            HintLine = 2
+            Order = 10
+            LabelScript = { param($c) "{0} | [Up/Down] Nav | [Space] Toggle | [R] Queue Restart" -f $c.TabHint }
+            VisibleScript = { param($c) $true }
+        },
+        [pscustomobject]@{
+            Id = "Tab2Line1Controls"
+            Scope = "Footer"
+            Tab = 2
+            Context = "Modes"
+            HintLine = 1
+            Order = 10
+            LabelScript = { param($c) "{0} | [Up/Down] Nav | [Space] Set Mode | [A] Queue Ideal States" -f $c.TabHint }
+            VisibleScript = { param($c) $c.HasMultipleModes }
+        },
+        [pscustomobject]@{
+            Id = "Tab3Line1Controls"
+            Scope = "Footer"
+            Tab = 3
+            Context = "Hardware"
+            HintLine = 1
+            Order = 10
+            LabelScript = { param($c) "{0} | [Up/Down] Nav | [Space] Toggle Override | [R] Queue Restart | [Bksp] Clear Queue" -f $c.TabHint }
+            VisibleScript = { param($c) $true }
+        },
+        [pscustomobject]@{
+            Id = "Tab4Line1Default"
+            Scope = "Footer"
+            Tab = 4
+            Context = "Settings"
+            HintLine = 1
+            Order = 10
+            LabelScript = { param($c) "{0} | [Up/Down] Nav | [Space] Edit Setting | [Right] Edit | [Left or +/-] Poll Seconds" -f $c.TabHint }
+            VisibleScript = { param($c) $c.Tab4RowKind -eq "none" }
+        },
+        [pscustomobject]@{
+            Id = "Tab4Line1ActionOrSection"
+            Scope = "Footer"
+            Tab = 4
+            Context = "Settings"
+            HintLine = 1
+            Order = 20
+            LabelScript = { param($c) "{0} | [Up/Down] Nav" -f $c.TabHint }
+            VisibleScript = { param($c) $c.Tab4RowKind -eq "action" -or $c.Tab4RowKind -eq "section" }
+        },
+        [pscustomobject]@{
+            Id = "Tab4Line1String"
+            Scope = "Footer"
+            Tab = 4
+            Context = "Settings"
+            HintLine = 1
+            Order = 30
+            LabelScript = { param($c) "{0} | [Up/Down] Nav | [Space] Edit Setting | [Right] Edit" -f $c.TabHint }
+            VisibleScript = { param($c) $c.Tab4RowKind -eq "string" }
+        },
+        [pscustomobject]@{
+            Id = "Tab4Line1Int"
+            Scope = "Footer"
+            Tab = 4
+            Context = "Settings"
+            HintLine = 1
+            Order = 40
+            LabelScript = { param($c) "{0} | [Up/Down] Nav | [Space] Edit Setting | [Left/Right or +/-] Poll Seconds" -f $c.TabHint }
+            VisibleScript = { param($c) $c.Tab4RowKind -eq "int" }
+        },
+        [pscustomobject]@{
+            Id = "Tab4Line1SettingGeneric"
+            Scope = "Footer"
+            Tab = 4
+            Context = "Settings"
+            HintLine = 1
+            Order = 50
+            LabelScript = { param($c) "{0} | [Up/Down] Nav | [Space] Edit Setting" -f $c.TabHint }
+            VisibleScript = { param($c) $c.Tab4RowKind -ne "none" -and $c.Tab4RowKind -ne "action" -and $c.Tab4RowKind -ne "section" -and $c.Tab4RowKind -ne "string" -and $c.Tab4RowKind -ne "int" }
+        },
+        [pscustomobject]@{
+            Id = "AllTabsCommitLine"
+            Scope = "Footer"
+            Tab = 0
+            Context = "Commit"
+            HintLine = 99
+            Order = 10
+            LabelScript = { param($c) "[C] CommitMode | [Enter] Commit & {0} | [Esc] Cancel" -f $c.CommitAction }
+            VisibleScript = { param($c) $c.Tab4RowKind -ne "action" }
+        },
+        [pscustomobject]@{
+            Id = "Tab4ActionCommitLine"
+            Scope = "Footer"
+            Tab = 4
+            Context = "Commit"
+            HintLine = 99
+            Order = 20
+            LabelScript = { param($c) "[C] CommitMode | [Enter] Confirm/Run Action | [Esc] Cancel" }
+            VisibleScript = { param($c) $c.Tab4RowKind -eq "action" }
+        }
+    )
+}
+
+function Get-DashboardFooterLinesFromMetadata {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$CurrentTab,
+        [string]$WorkloadDetailMode = "None",
+        [string]$CommitMode = "Exit",
+        [Parameter(Mandatory = $false)]
+        [psobject]$Tab4SelectedRow = $null,
+        [bool]$HasMultipleModes = $true
+    )
+
+    $commitAction = if ($CommitMode -eq "Return") { "Return" } else { "Exit" }
+    $tab4RowKind = "none"
+    if ($CurrentTab -eq 4 -and $null -ne $Tab4SelectedRow) {
+        if (Test-DashboardTab4RowIsAction -Row $Tab4SelectedRow) {
+            $tab4RowKind = "action"
+        } elseif (Test-DashboardTab4RowIsSection -Row $Tab4SelectedRow) {
+            $tab4RowKind = "section"
+        } else {
+            $tab4RowKind = [string]$Tab4SelectedRow.Type
+        }
+    }
+
+    $context = [pscustomobject]@{
+        CurrentTab = $CurrentTab
+        WorkloadDetailMode = $WorkloadDetailMode
+        CommitAction = $commitAction
+        Tab4RowKind = $tab4RowKind
+        HasMultipleModes = $HasMultipleModes
+        TabHint = Get-DashboardFooterTabHint -HasMultipleModes:$HasMultipleModes
+    }
+
+    $hints = @(Get-DashboardFooterHintDefinitions | Where-Object {
+            (($_.Tab -eq 0) -or ($_.Tab -eq $CurrentTab)) -and (& $_.VisibleScript $context)
+        } | Sort-Object HintLine, Order)
+
+    $lineMap = @{}
+    foreach ($hint in $hints) {
+        $lineMap[$hint.HintLine] = (& $hint.LabelScript $context)
+    }
+
+    $orderedLines = @($lineMap.Keys | Sort-Object | ForEach-Object { [string]$lineMap[$_] })
+    return ($orderedLines -join "`n")
+}
+
 function Get-DashboardFooterText {
     [CmdletBinding()]
     param(
@@ -331,42 +535,11 @@ function Get-DashboardFooterText {
         [string]$WorkloadDetailMode = "None",
         [string]$CommitMode = "Exit",
         [Parameter(Mandatory = $false)]
-        [psobject]$Tab4SelectedRow = $null
+        [psobject]$Tab4SelectedRow = $null,
+        [bool]$HasMultipleModes = $true
     )
 
-    $commitAction = if ($CommitMode -eq "Return") { "Return" } else { "Exit" }
-    $commitRow = "[C] CommitMode | [Enter] Commit & $commitAction | [Esc] Cancel"
-
-    if ($CurrentTab -eq 1) {
-        $domainText = "All"
-        if (-not [string]::IsNullOrWhiteSpace([string]$script:WorkloadFilterState.Domain)) {
-            $domainText = [string]$script:WorkloadFilterState.Domain
-        }
-        $favoriteText = "Off"
-        if ($script:WorkloadFilterState.FavoritesOnly) {
-            $favoriteText = "On"
-        }
-        $mixedText = "Off"
-        if ($script:WorkloadFilterState.MixedOnly) {
-            $mixedText = "On"
-        }
-        $filterText = "[``]Details: {0} | [M]ixed={1} | [/]Filters: q='{2}' | [G]roup='{3}' | [F]avourites={4}" -f `
-            $WorkloadDetailMode, `
-            $mixedText, `
-            [string]$script:WorkloadFilterState.Query, `
-            $domainText, `
-            $favoriteText
-        return "$filterText`n[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle | [R] Queue Restart`n$commitRow"
-    }
-    if ($CurrentTab -eq 2) {
-        return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Set Mode | [A] Queue Ideal States`n$commitRow"
-    }
-    if ($CurrentTab -eq 4) {
-        $tab4ControlLine = Get-DashboardTab4ControlLine -SelectedRow $Tab4SelectedRow
-        $tab4CommitLine = Get-DashboardTab4CommitLine -SelectedRow $Tab4SelectedRow -CommitMode $CommitMode
-        return "$tab4ControlLine`n$tab4CommitLine"
-    }
-    return "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle Override | [R] Queue Restart | [Bksp] Clear Queue`n$commitRow"
+    return Get-DashboardFooterLinesFromMetadata -CurrentTab $CurrentTab -WorkloadDetailMode $WorkloadDetailMode -CommitMode $CommitMode -Tab4SelectedRow $Tab4SelectedRow -HasMultipleModes:$HasMultipleModes
 }
 
 function Get-DashboardTab4ControlLine {

@@ -1647,3 +1647,47 @@ Describe "Dashboard unified key routing maps" {
         (Resolve-DashboardDefaultKeyActionId -CurrentTab 1 -ActiveModal "PostCommitReturnMode" -Key "A" -HasMultipleModes $true) | Should -Be "ModalPostCommitReturnToDashboard"
     }
 }
+
+Describe "Dashboard dynamic footer hint metadata" {
+    BeforeAll {
+        $basePath = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+        $script:repoRoot = Split-Path -Path $basePath -Parent
+        $script:scriptsDir = Join-Path -Path $script:repoRoot -ChildPath "Scripts"
+        . (Join-Path -Path $script:scriptsDir -ChildPath "Dashboard.ps1")
+    }
+
+    It "builds footer lines from metadata with exact baseline output" {
+        $tab1 = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 1 -WorkloadDetailMode "None" -CommitMode "Exit" -HasMultipleModes $true) -split "`n")
+        $tab2 = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 2 -WorkloadDetailMode "None" -CommitMode "Exit" -HasMultipleModes $true) -split "`n")
+        $tab3 = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 3 -WorkloadDetailMode "None" -CommitMode "Exit" -HasMultipleModes $true) -split "`n")
+        $tab4 = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 4 -WorkloadDetailMode "None" -CommitMode "Exit" -HasMultipleModes $true) -split "`n")
+
+        $tab1[1] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle | [R] Queue Restart"
+        $tab2[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Set Mode | [A] Queue Ideal States"
+        $tab3[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Toggle Override | [R] Queue Restart | [Bksp] Clear Queue"
+        $tab4[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting | [Right] Edit | [Left or +/-] Poll Seconds"
+    }
+
+    It "keeps tab4 row-type specific hint variants from metadata renderer" {
+        $stringRow = [pscustomobject]@{ Key = "shortcut_prefix_start"; Type = "string"; Value = "!Start-" }
+        $intRow = [pscustomobject]@{ Key = "interceptor_poll_max_seconds"; Type = "int"; Value = 15; Min = 1 }
+        $actionRow = [pscustomobject]@{ Key = "Reset_Interceptors"; Type = "action"; ActionId = "Reset_Interceptors" }
+
+        $stringLines = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 4 -Tab4SelectedRow $stringRow -CommitMode "Exit" -HasMultipleModes $true) -split "`n")
+        $intLines = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 4 -Tab4SelectedRow $intRow -CommitMode "Exit" -HasMultipleModes $true) -split "`n")
+        $actionLines = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 4 -Tab4SelectedRow $actionRow -CommitMode "Return" -HasMultipleModes $true) -split "`n")
+
+        $stringLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting | [Right] Edit"
+        $intLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav | [Space] Edit Setting | [Left/Right or +/-] Poll Seconds"
+        $actionLines[0] | Should -Be "[1][2][3][4] Tab | [Up/Down] Nav"
+        $actionLines[1] | Should -Be "[C] CommitMode | [Enter] Confirm/Run Action | [Esc] Cancel"
+    }
+
+    It "supports tab2 availability guard in footer metadata rendering" {
+        $tab1WithoutModes = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 1 -WorkloadDetailMode "None" -CommitMode "Exit" -HasMultipleModes $false) -split "`n")
+        $tab3WithoutModes = @((Get-DashboardFooterLinesFromMetadata -CurrentTab 3 -WorkloadDetailMode "None" -CommitMode "Exit" -HasMultipleModes $false) -split "`n")
+
+        $tab1WithoutModes[1] | Should -Be "[1][3][4] Tab | [Up/Down] Nav | [Space] Toggle | [R] Queue Restart"
+        $tab3WithoutModes[0] | Should -Be "[1][3][4] Tab | [Up/Down] Nav | [Space] Toggle Override | [R] Queue Restart | [Bksp] Clear Queue"
+    }
+}

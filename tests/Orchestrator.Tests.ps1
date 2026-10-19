@@ -118,9 +118,9 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         }
     }
 
-    It "sets service lifecycle wait timeout to 18 seconds" {
+    It "sets service lifecycle wait timeout to 8 seconds" {
         $scriptText = Get-Content -Path $script:scriptPath -Raw -Encoding UTF8
-        $scriptText | Should -Match '\$script:ServiceLifecycleWaitTimeoutMs\s*=\s*18000\b'
+        $scriptText | Should -Match '\$script:ServiceLifecycleWaitTimeoutMs\s*=\s*8000\b'
     }
 
     It "continues stop workflow when executable scoped manual gate timeout is reached" {
@@ -1072,6 +1072,51 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         $config.System_Modes.Eco_Life.hardware_targets.NVIDIA_RTX_4050_Laptop_GPU | Should -Be "OFF"
         $config.System_Modes.Normal_Life.hardware_targets.NVIDIA_RTX_4050_Laptop_GPU | Should -Be "ON"
         $config.System_Modes.Live_Stage_Life.hardware_targets.NVIDIA_RTX_4050_Laptop_GPU | Should -Be "ON"
+    }
+
+    It "declares RUN Flush NVIDIA GPU manual action in default configuration" {
+        $config = Get-Content -Path $script:backupPath -Raw | ConvertFrom-Json
+        $runKey = "RUN: Flush NVIDIA GPU"
+        $def = $config.Hardware_Definitions.$runKey
+        $def | Should -Not -BeNullOrEmpty
+        $def.type | Should -Be "stateless"
+        @($def.action_override_on) | Should -Contain "'./CustomScripts/Flush-NvidiaGpu.ps1'"
+
+        foreach ($modeProp in $config.System_Modes.PSObject.Properties) {
+            $modeProp.Value.hardware_targets.$runKey | Should -Be "ANY"
+        }
+    }
+
+    It "routes Hardware_Override Start to Flush-NvidiaGpu script for RUN component" {
+        @'
+{
+  "Hardware_Definitions": {
+    "RUN: Flush NVIDIA GPU": {
+      "type": "stateless",
+      "action_override_on": ["'C:/Scripts/Flush-NvidiaGpu.ps1'"]
+    }
+  },
+  "System_Modes": {},
+  "App_Workloads": {}
+}
+'@ | Set-Content -Path $script:dbPath -Encoding UTF8
+
+        Mock -CommandName gsudo -MockWith { "ok" }
+        Mock -CommandName Start-Process -MockWith { }
+        Mock -CommandName Test-Path -MockWith { $true } -ParameterFilter {
+            $LiteralPath -like "*Flush-NvidiaGpu.ps1"
+        }
+
+        { & $script:scriptPath -WorkspaceName "RUN: Flush NVIDIA GPU" -Action "Start" -ProfileType "Hardware_Override" | Out-Null } | Should -Not -Throw
+
+        $overrideFull = [System.IO.Path]::GetFullPath("C:/Scripts/Flush-NvidiaGpu.ps1")
+        $expectedPwshArgs = "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$overrideFull`""
+        Assert-MockCalled -CommandName Start-Process -Times 1 -Exactly -ParameterFilter {
+            $FilePath -eq "pwsh.exe" -and
+            $ArgumentList -eq $expectedPwshArgs -and
+            $Wait -eq $true -and
+            $NoNewWindow -eq $true
+        }
     }
 }
 
