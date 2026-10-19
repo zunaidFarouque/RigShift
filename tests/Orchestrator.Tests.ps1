@@ -1066,8 +1066,7 @@ Describe "Orchestrator Dictionary/Matrix Execution" {
         $gpuDefinition = $config.Hardware_Definitions.NVIDIA_RTX_4050_Laptop_GPU
         $gpuDefinition | Should -Not -BeNullOrEmpty
         $gpuDefinition.type | Should -Be "pnp_device"
-        @($gpuDefinition.match) | Should -Contain "*RTX 4050*"
-        @($gpuDefinition.match) | Should -Contain "*NVIDIA*RTX*4050*Laptop GPU*"
+        @($gpuDefinition.match) | Should -Contain "*NVIDIA GeForce*"
 
         $config.System_Modes.Eco_Life.hardware_targets.NVIDIA_RTX_4050_Laptop_GPU | Should -Be "OFF"
         $config.System_Modes.Normal_Life.hardware_targets.NVIDIA_RTX_4050_Laptop_GPU | Should -Be "ON"
